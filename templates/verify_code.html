@@ -1,0 +1,18 @@
+<!-- verify_code.html -->
+{% extends "base.html" %}
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-5">
+        <div class="card p-4 mt-5">
+            <h3 class="text-center mb-4">کد تایید تلگرام</h3>
+            <p class="text-center text-muted">کد ارسال شده به {{ phone }} را وارد کنید</p>
+            <form method="POST">
+                <div class="mb-3">
+                    <input type="text" name="code" class="form-control text-center" placeholder="12345" required>
+                </div>
+                <button type="submit" class="btn btn-primary w-100">تایید</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -9,7 +9,7 @@ from pyrogram.errors import FloodWait
 from pyrogram.handlers import MessageHandler
 
 from config import API_ID, API_HASH, BOT_USER_ID
-from database import get_user, get_all_users
+from database import get_tg_account, get_all_tg_accounts
 
 
 # ------------------------------------------------------------------
@@ -271,7 +271,7 @@ async def rescue_loop(client, message):
 
 async def handle_bot_message(client, phone: str, message):
     try:
-        user = get_user(phone)
+        user = get_tg_account(phone)
 
         if not user or not user.get("is_active"):
             return
@@ -330,7 +330,7 @@ async def smart_scheduler_loop(client, phone: str):
             if not worker or not worker.get("running"):
                 break
 
-            user = get_user(phone)
+            user = get_tg_account(phone)
 
             if not user or not user.get("is_active"):
                 await asyncio.sleep(15)
@@ -419,7 +419,7 @@ async def _start_worker(phone: str):
     if worker and worker.get("running"):
         return
 
-    user = get_user(phone)
+    user = get_tg_account(phone)
 
     if not user:
         print(f"❌ Worker start failed: user not found {phone}")
@@ -516,8 +516,7 @@ def start_all_active(loop=None):
     if loop is not None:
         _GLOBAL_LOOP = loop
 
-    users = get_all_users()
-
-    for user in users:
-        if user.get("is_active"):
-            start_worker(user["phone"], loop)
+    accounts = get_all_tg_accounts()
+    for acc in accounts:
+        if acc.get("is_active"):
+            start_worker(acc["phone"], loop)

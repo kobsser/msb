@@ -3,19 +3,23 @@
 <div class="row justify-content-center">
     <div class="col-md-5">
         <div class="card p-4 mt-5">
-            <h3 class="text-center mb-4">ورود به پنل</h3>
+            <h3 class="text-center mb-4">ثبت نام</h3>
             <form method="POST">
                 <div class="mb-3">
-                    <label class="form-label">نام کاربری</label>
+                    <label class="form-label">کد دعوت</label>
+                    <input type="text" name="invite_code" class="form-control" value="{{ request.args.get('code', '') }}" required>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">نام کاربری دلخواه</label>
                     <input type="text" name="username" class="form-control" required>
                 </div>
                 <div class="mb-3">
                     <label class="form-label">رمز عبور</label>
                     <input type="password" name="password" class="form-control" required>
                 </div>
-                <button type="submit" class="btn btn-primary w-100">ورود</button>
+                <button type="submit" class="btn btn-success w-100">ثبت نام</button>
                 <div class="text-center mt-3">
-                    <a href="{{ url_for('register') }}">حساب ندارید؟ ثبت نام با کد دعوت</a>
+                    <a href="{{ url_for('login') }}">قبلا ثبت نام کرده‌اید؟ ورود</a>
                 </div>
             </form>
         </div>

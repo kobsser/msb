@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card p-4">
+    <h4 class="mb-4">مدیریت کدهای دعوت</h4>
+    <form method="POST" class="mb-4">
+        <button type="submit" class="btn btn-success">+ ایجاد کد دعوت جدید</button>
+    </form>
+    
+    <div class="table-responsive">
+        <table class="table table-hover">
+            <thead>
+                <tr>
+                    <th>کد دعوت</th>
+                    <th>وضعیت</th>
+                    <th>لینک ثبت نام</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for inv in invites %}
+                <tr>
+                    <td><code>{{ inv.code }}</code></td>
+                    <td>
+                        {% if inv.used %}
+                            <span class="badge bg-secondary">استفاده شده</span>
+                        {% else %}
+                            <span class="badge bg-success">فعال</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if not inv.used %}
+                        <a href="{{ url_for('register', code=inv.code, _external=True) }}" target="_blank" class="small text-decoration-none">
+                            لینک ثبت نام ↗
+                        </a>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
