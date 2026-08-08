@@ -5,12 +5,22 @@ load_dotenv()
 
 API_ID = int(os.getenv("API_ID", 0))
 API_HASH = os.getenv("API_HASH", "")
-PANEL_PASSWORD = os.getenv("PANEL_PASSWORD", "admin123")
-SECRET_KEY = os.getenv("SECRET_KEY", "change-this-secret-key-please")
 
-BOT_USER_ID = 8299996037  # آیدی بات بازی
+PANEL_PASSWORD = os.getenv("PANEL_PASSWORD")
+SECRET_KEY = os.getenv("SECRET_KEY")
 
-# مسیر داده‌ها روی Railway
+if not PANEL_PASSWORD:
+    raise RuntimeError("PANEL_PASSWORD environment variable is required")
+
+if not SECRET_KEY:
+    raise RuntimeError("SECRET_KEY environment variable is required")
+
+if not API_ID or not API_HASH:
+    raise RuntimeError("API_ID and API_HASH environment variables are required")
+
+# Hardcoded as requested
+BOT_USER_ID = 8299996037
+
 DATA_DIR = "/app/data" if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_ENV") else "data"
 os.makedirs(DATA_DIR, exist_ok=True)
 

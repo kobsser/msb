@@ -1,94 +1,168 @@
-import sqlite3
+import os
 import json
-import time
+import sqlite3
+import threading
+
 from config import DB_PATH
 
+_local = threading.local()
+
+
 def get_conn():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    return conn
+    if not hasattr(_local, "conn") or _local.conn is None:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        _local.conn = conn
+
+    return _local.conn
+
 
 def init_db():
-    with get_conn() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                phone TEXT PRIMARY KEY,
-                session_string TEXT NOT NULL,
-                selected_groups TEXT DEFAULT '[]',
-                meow_enabled INTEGER DEFAULT 1,
-                fish_enabled INTEGER DEFAULT 1,
-                is_active INTEGER DEFAULT 0,
-                cached_groups TEXT,
-                cached_groups_time REAL
-            )
-        """)
-        conn.commit()
+    conn = get_conn()
+    cur = conn.cursor()
 
-def save_user(phone, session_string, selected_groups=None, meow_enabled=True,
-              fish_enabled=True, is_active=False, cached_groups=None):
-    with get_conn() as conn:
-        conn.execute("""
-            INSERT OR REPLACE INTO users
-            (phone, session_string, selected_groups, meow_enabled, fish_enabled,
-             is_active, cached_groups, cached_groups_time)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            phone TEXT PRIMARY KEY,
+            session_string TEXT NOT NULL,
+            selected_groups TEXT DEFAULT '[]',
+            meow_enabled INTEGER DEFAULT 0,
+            fish_enabled INTEGER DEFAULT 0,
+            is_active INTEGER DEFAULT 0,
+            cached_groups TEXT DEFAULT '[]',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    cur.execute("PRAGMA table_info(users)")
+    cols = {row[1] for row in cur.fetchall()}
+
+    if "selected_groups" not in cols:
+        cur.execute("ALTER TABLE users ADD COLUMN selected_groups TEXT DEFAULT '[]'")
+
+    if "meow_enabled" not in cols:
+        cur.execute("ALTER TABLE users ADD COLUMN meow_enabled INTEGER DEFAULT 0")
+
+    if "fish_enabled" not in cols:
+        cur.execute("ALTER TABLE users ADD COLUMN fish_enabled INTEGER DEFAULT 0")
+
+    if "is_active" not in cols:
+        cur.execute("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 0")
+
+    if "cached_groups" not in cols:
+        cur.execute("ALTER TABLE users ADD COLUMN cached_groups TEXT DEFAULT '[]'")
+
+    conn.commit()
+
+
+def _bool(value):
+    return 1 if value else 0
+
+
+def _json_dumps(value):
+    return json.dumps(value or [], ensure_ascii=False)
+
+
+def _json_loads(value):
+    try:
+        data = json.loads(value or "[]")
+        if isinstance(data, list):
+            return data
+        return []
+    except:
+        return []
+
+
+def _row_to_user(row):
+    if not row:
+        return None
+
+    user = dict(row)
+
+    user["selected_groups"] = _json_loads(user.get("selected_groups"))
+    user["cached_groups"] = _json_loads(user.get("cached_groups"))
+
+    user["meow_enabled"] = bool(user.get("meow_enabled"))
+    user["fish_enabled"] = bool(user.get("fish_enabled"))
+    user["is_active"] = bool(user.get("is_active"))
+
+    # Compatibility alias for templates/logic
+    user["pishi_enabled"] = user["fish_enabled"]
+
+    return user
+
+
+def save_user(
+    phone,
+    session_string,
+    selected_groups=None,
+    meow_enabled=False,
+    fish_enabled=False,
+    is_active=False,
+    cached_groups=None,
+    pishi_enabled=None
+):
+    if pishi_enabled is not None:
+        fish_enabled = pishi_enabled
+
+    conn = get_conn()
+
+    conn.execute(
+        """
+        INSERT INTO users (
             phone,
             session_string,
-            json.dumps(selected_groups or []),
-            1 if meow_enabled else 0,
-            1 if fish_enabled else 0,
-            1 if is_active else 0,
-            json.dumps(cached_groups) if cached_groups else None,
-            time.time() if cached_groups else None
-        ))
-        conn.commit()
+            selected_groups,
+            meow_enabled,
+            fish_enabled,
+            is_active,
+            cached_groups
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(phone) DO UPDATE SET
+            session_string = excluded.session_string,
+            selected_groups = excluded.selected_groups,
+            meow_enabled = excluded.meow_enabled,
+            fish_enabled = excluded.fish_enabled,
+            is_active = excluded.is_active,
+            cached_groups = excluded.cached_groups
+        """,
+        (
+            str(phone),
+            session_string,
+            _json_dumps(selected_groups),
+            _bool(meow_enabled),
+            _bool(fish_enabled),
+            _bool(is_active),
+            _json_dumps(cached_groups),
+        )
+    )
+
+    conn.commit()
+
 
 def get_user(phone):
-    with get_conn() as conn:
-        row = conn.execute("SELECT * FROM users WHERE phone = ?", (phone,)).fetchone()
-        if not row:
-            return None
-        return {
-            "phone": row["phone"],
-            "session_string": row["session_string"],
-            "selected_groups": json.loads(row["selected_groups"] or "[]"),
-            "meow_enabled": bool(row["meow_enabled"]),
-            "fish_enabled": bool(row["fish_enabled"]),
-            "is_active": bool(row["is_active"]),
-            "cached_groups": json.loads(row["cached_groups"]) if row["cached_groups"] else None,
-            "cached_groups_time": row["cached_groups_time"]
-        }
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("SELECT * FROM users WHERE phone = ?", (str(phone),))
+    row = cur.fetchone()
+
+    return _row_to_user(row)
+
 
 def get_all_users():
-    with get_conn() as conn:
-        rows = conn.execute("SELECT phone, selected_groups, meow_enabled, fish_enabled, is_active FROM users").fetchall()
-        return [{
-            "phone": r["phone"],
-            "groups_count": len(json.loads(r["selected_groups"] or "[]")),
-            "meow_enabled": bool(r["meow_enabled"]),
-            "fish_enabled": bool(r["fish_enabled"]),
-            "is_active": bool(r["is_active"])
-        } for r in rows]
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("SELECT * FROM users ORDER BY phone")
+    rows = cur.fetchall()
+
+    return [_row_to_user(row) for row in rows if row]
+
 
 def delete_user(phone):
-    with get_conn() as conn:
-        conn.execute("DELETE FROM users WHERE phone = ?", (phone,))
-        conn.commit()
-
-def update_user_field(phone, **kwargs):
-    user = get_user(phone)
-    if not user:
-        return
-    for k, v in kwargs.items():
-        if k in user:
-            user[k] = v
-    save_user(
-        phone,
-        user["session_string"],
-        user["selected_groups"],
-        user["meow_enabled"],
-        user["fish_enabled"],
-        user["is_active"],
-        user.get("cached_groups")
-    )
+    conn = get_conn()
+    conn.execute("DELETE FROM users WHERE phone = ?", (str(phone),))
+    conn.commit()
