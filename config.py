@@ -6,6 +6,7 @@ load_dotenv()
 API_ID = int(os.getenv("API_ID", 0))
 API_HASH = os.getenv("API_HASH", "")
 SECRET_KEY = os.getenv("SECRET_KEY", "default-secret-key")
+ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
 
 BOT_USER_ID = 8299996037
 

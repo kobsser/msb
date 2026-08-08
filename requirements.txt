@@ -1,6 +1,8 @@
-flask==3.0.3
-pyrogram==2.0.106
+flask
+kurigram
 tgcrypto
-gunicorn
 python-dotenv
-requests
+gunicorn
+werkzeug
+psycopg2-binary
+cryptography
