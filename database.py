@@ -120,9 +120,9 @@ def init_db():
             fishing_enabled INTEGER DEFAULT 0,
             is_active INTEGER DEFAULT 0,
             cached_groups TEXT DEFAULT '[]',
-            meow_next_run REAL DEFAULT 0,
-            pishi_next_run REAL DEFAULT 0,
-            fishing_next_run REAL DEFAULT 0,
+            meow_next_run BIGINT DEFAULT 0,
+            pishi_next_run BIGINT DEFAULT 0,
+            fishing_next_run BIGINT DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -134,7 +134,7 @@ def init_db():
         )
     """)
 
-    # Compatibility migrations
+    # Compatibility migrations for older databases
     cur.execute("""
         DO $$
         BEGIN
@@ -156,21 +156,75 @@ def init_db():
                 SELECT 1 FROM information_schema.columns
                 WHERE table_name='tg_accounts' AND column_name='meow_next_run'
             ) THEN
-                ALTER TABLE tg_accounts ADD COLUMN meow_next_run REAL DEFAULT 0;
+                ALTER TABLE tg_accounts ADD COLUMN meow_next_run BIGINT DEFAULT 0;
             END IF;
 
             IF NOT EXISTS (
                 SELECT 1 FROM information_schema.columns
                 WHERE table_name='tg_accounts' AND column_name='pishi_next_run'
             ) THEN
-                ALTER TABLE tg_accounts ADD COLUMN pishi_next_run REAL DEFAULT 0;
+                ALTER TABLE tg_accounts ADD COLUMN pishi_next_run BIGINT DEFAULT 0;
             END IF;
 
             IF NOT EXISTS (
                 SELECT 1 FROM information_schema.columns
                 WHERE table_name='tg_accounts' AND column_name='fishing_next_run'
             ) THEN
-                ALTER TABLE tg_accounts ADD COLUMN fishing_next_run REAL DEFAULT 0;
+                ALTER TABLE tg_accounts ADD COLUMN fishing_next_run BIGINT DEFAULT 0;
+            END IF;
+        END $$;
+    """)
+
+    # Convert old REAL / DOUBLE PRECISION timer columns to BIGINT
+    cur.execute("""
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name='tg_accounts'
+                  AND column_name='meow_next_run'
+                  AND data_type <> 'bigint'
+            ) THEN
+                ALTER TABLE tg_accounts
+                ALTER COLUMN meow_next_run
+                TYPE BIGINT
+                USING ROUND(COALESCE(meow_next_run, 0))::BIGINT;
+
+                ALTER TABLE tg_accounts
+                ALTER COLUMN meow_next_run
+                SET DEFAULT 0;
+            END IF;
+
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name='tg_accounts'
+                  AND column_name='pishi_next_run'
+                  AND data_type <> 'bigint'
+            ) THEN
+                ALTER TABLE tg_accounts
+                ALTER COLUMN pishi_next_run
+                TYPE BIGINT
+                USING ROUND(COALESCE(pishi_next_run, 0))::BIGINT;
+
+                ALTER TABLE tg_accounts
+                ALTER COLUMN pishi_next_run
+                SET DEFAULT 0;
+            END IF;
+
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name='tg_accounts'
+                  AND column_name='fishing_next_run'
+                  AND data_type <> 'bigint'
+            ) THEN
+                ALTER TABLE tg_accounts
+                ALTER COLUMN fishing_next_run
+                TYPE BIGINT
+                USING ROUND(COALESCE(fishing_next_run, 0))::BIGINT;
+
+                ALTER TABLE tg_accounts
+                ALTER COLUMN fishing_next_run
+                SET DEFAULT 0;
             END IF;
         END $$;
     """)
@@ -197,9 +251,9 @@ def init_db():
             print(f"✅ Created admin user: {admin_user}")
 
 
-# -------------------------
+# ============================================================
 # Settings
-# -------------------------
+# ============================================================
 
 def get_setting(key, default=None):
     conn = get_conn()
@@ -269,9 +323,9 @@ def get_setting_float(key, default=0.0):
         return default
 
 
-# -------------------------
+# ============================================================
 # Web users
-# -------------------------
+# ============================================================
 
 def create_web_user(username, password, is_admin=False):
     conn = get_conn()
@@ -309,9 +363,9 @@ def verify_web_user(username, password):
     return None
 
 
-# -------------------------
+# ============================================================
 # Invites
-# -------------------------
+# ============================================================
 
 def create_invite(code):
     conn = get_conn()
@@ -365,9 +419,9 @@ def use_invite(code, user_id):
     cur.close()
 
 
-# -------------------------
+# ============================================================
 # Telegram accounts
-# -------------------------
+# ============================================================
 
 def _json_dumps(value):
     return json.dumps(value or [], ensure_ascii=False)
@@ -382,6 +436,16 @@ def _json_loads(value):
 
 def _bool(value):
     return 1 if value else 0
+
+
+def _int_or_none(value):
+    if value is None:
+        return None
+
+    try:
+        return int(float(value))
+    except:
+        return None
 
 
 def _row_to_account(row):
@@ -399,9 +463,9 @@ def _row_to_account(row):
     acc["fishing_enabled"] = bool(acc.get("fishing_enabled"))
     acc["is_active"] = bool(acc.get("is_active"))
 
-    acc["meow_next_run"] = float(acc.get("meow_next_run") or 0.0)
-    acc["pishi_next_run"] = float(acc.get("pishi_next_run") or 0.0)
-    acc["fishing_next_run"] = float(acc.get("fishing_next_run") or 0.0)
+    acc["meow_next_run"] = int(float(acc.get("meow_next_run") or 0))
+    acc["pishi_next_run"] = int(float(acc.get("pishi_next_run") or 0))
+    acc["fishing_next_run"] = int(float(acc.get("fishing_next_run") or 0))
 
     # Compatibility alias
     acc["fish_enabled"] = acc["pishi_enabled"]
@@ -427,22 +491,22 @@ def save_tg_account(
 
     if existing:
         if meow_next_run is None:
-            meow_next_run = existing.get("meow_next_run", 0.0)
+            meow_next_run = existing.get("meow_next_run", 0)
 
         if pishi_next_run is None:
-            pishi_next_run = existing.get("pishi_next_run", 0.0)
+            pishi_next_run = existing.get("pishi_next_run", 0)
 
         if fishing_next_run is None:
-            fishing_next_run = existing.get("fishing_next_run", 0.0)
+            fishing_next_run = existing.get("fishing_next_run", 0)
     else:
         if meow_next_run is None:
-            meow_next_run = 0.0
+            meow_next_run = 0
 
         if pishi_next_run is None:
-            pishi_next_run = 0.0
+            pishi_next_run = 0
 
         if fishing_next_run is None:
-            fishing_next_run = 0.0
+            fishing_next_run = 0
 
     conn = get_conn()
     cur = conn.cursor()
@@ -489,9 +553,9 @@ def save_tg_account(
             _bool(fishing_enabled),
             _bool(is_active),
             _json_dumps(cached_groups),
-            float(meow_next_run or 0.0),
-            float(pishi_next_run or 0.0),
-            float(fishing_next_run or 0.0)
+            int(float(meow_next_run or 0)),
+            int(float(pishi_next_run or 0)),
+            int(float(fishing_next_run or 0))
         )
     )
 
@@ -572,12 +636,149 @@ def update_account_next_run(
         WHERE phone = %s
         """,
         (
-            meow_next_run,
-            pishi_next_run,
-            fishing_next_run,
+            _int_or_none(meow_next_run),
+            _int_or_none(pishi_next_run),
+            _int_or_none(fishing_next_run),
             str(phone)
         )
     )
 
     conn.commit()
     cur.close()
+
+
+# ============================================================
+# Atomic trigger claims
+# ============================================================
+
+def claim_dynamic_feature(
+    phone,
+    feature,
+    mode,
+    waiting_timestamp,
+    now,
+    timeout=0
+):
+    """
+    Atomically claims a dynamic feature trigger.
+
+    Modes:
+      send_initial
+      send_due
+      retry_after_parse_timeout
+
+    Returns True only if this process/task successfully claimed the trigger.
+    """
+    columns = {
+        "meow": "meow_next_run",
+        "fishing": "fishing_next_run",
+    }
+
+    col = columns.get(feature)
+
+    if not col:
+        return False
+
+    try:
+        waiting_timestamp = int(float(waiting_timestamp))
+        now = int(float(now))
+
+        conn = get_conn()
+        cur = conn.cursor()
+
+        if mode == "send_initial":
+            cur.execute(
+                f"""
+                UPDATE tg_accounts
+                SET {col} = %s
+                WHERE phone = %s
+                  AND ({col} IS NULL OR {col} = 0)
+                """,
+                (waiting_timestamp, str(phone))
+            )
+
+        elif mode == "send_due":
+            cur.execute(
+                f"""
+                UPDATE tg_accounts
+                SET {col} = %s
+                WHERE phone = %s
+                  AND {col} > 0
+                  AND {col} <= %s
+                """,
+                (waiting_timestamp, str(phone), now)
+            )
+
+        elif mode == "retry_after_parse_timeout":
+            timeout = max(0, int(float(timeout)))
+            cutoff = now - timeout
+
+            cur.execute(
+                f"""
+                UPDATE tg_accounts
+                SET {col} = %s
+                WHERE phone = %s
+                  AND {col} < 0
+                  AND (-{col}) <= %s
+                """,
+                (waiting_timestamp, str(phone), cutoff)
+            )
+
+        else:
+            cur.close()
+            return False
+
+        conn.commit()
+
+        claimed = cur.rowcount > 0
+
+        cur.close()
+
+        return claimed
+
+    except Exception as e:
+        print(f"❌ claim_dynamic_feature error [{phone}] [{feature}] [{mode}]: {e}")
+        return False
+
+
+def claim_interval_feature(phone, feature, scheduled_timestamp, now):
+    """
+    Atomically claims interval-based features like Pishi.
+    """
+    columns = {
+        "pishi": "pishi_next_run",
+    }
+
+    col = columns.get(feature)
+
+    if not col:
+        return False
+
+    try:
+        scheduled_timestamp = int(float(scheduled_timestamp))
+        now = int(float(now))
+
+        conn = get_conn()
+        cur = conn.cursor()
+
+        cur.execute(
+            f"""
+            UPDATE tg_accounts
+            SET {col} = %s
+            WHERE phone = %s
+              AND ({col} IS NULL OR {col} <= %s)
+            """,
+            (scheduled_timestamp, str(phone), now)
+        )
+
+        conn.commit()
+
+        claimed = cur.rowcount > 0
+
+        cur.close()
+
+        return claimed
+
+    except Exception as e:
+        print(f"❌ claim_interval_feature error [{phone}] [{feature}]: {e}")
+        return False
