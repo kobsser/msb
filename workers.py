@@ -48,6 +48,9 @@ FISHING_CLICK_TASKS = {}
 PISHI_CLICK_TASKS = {}
 MEOW_CLICK_TASKS = {}
 
+ACCOUNT_SELF_IDS = {}
+REPLY_OWNER_CACHE = {}
+
 FA_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789")
 
 COOLDOWN_RE = re.compile(
@@ -683,6 +686,61 @@ async def send_fishing_probe(client, phone: str, chat_ids, reason: str):
 # Bot message handler
 # ============================================================
 
+async def is_reply_to_self(client, message, self_id):
+    """
+    Returns True only if the message is a reply to a message
+    sent by this account's own Telegram user ID.
+    """
+    reply_to_message_id = getattr(message, "reply_to_message_id", None)
+    replied_message = getattr(message, "reply_to_message", None)
+
+    if not reply_to_message_id and not replied_message:
+        return False
+
+    # Fast path: Pyrogram already included the replied message
+    if replied_message:
+        sender = getattr(replied_message, "from_user", None)
+
+        if sender and getattr(sender, "id", None) == self_id:
+            return True
+
+    if not reply_to_message_id:
+        return False
+
+    cache_key = f"{message.chat.id}:{reply_to_message_id}"
+
+    cached_owner = REPLY_OWNER_CACHE.get(cache_key)
+
+    if cached_owner is not None:
+        return cached_owner == self_id
+
+    owner_id = None
+
+    try:
+        fetched_message = await client.get_messages(
+            message.chat.id,
+            reply_to_message_id
+        )
+
+        if fetched_message:
+            sender = getattr(fetched_message, "from_user", None)
+
+            if sender:
+                owner_id = getattr(sender, "id", None)
+
+    except Exception as e:
+        print(f"❌ is_reply_to_self fetch error: {e}")
+        owner_id = None
+
+    if owner_id is not None:
+        REPLY_OWNER_CACHE[cache_key] = owner_id
+
+        if len(REPLY_OWNER_CACHE) > 10000:
+            REPLY_OWNER_CACHE.clear()
+
+    return owner_id == self_id
+
+
 async def handle_bot_message(client, phone: str, message):
     try:
         user = get_tg_account(phone)
@@ -693,6 +751,28 @@ async def handle_bot_message(client, phone: str, message):
         selected_chat_ids = get_selected_chat_ids(user)
 
         if message.chat.id not in selected_chat_ids:
+            return
+
+        # ============================================================
+        # STRICT REQUIREMENT:
+        # The game bot message must be a reply to this account's own message.
+        # ============================================================
+        self_id = ACCOUNT_SELF_IDS.get(phone)
+
+        if not self_id:
+            try:
+                self_user = getattr(client, "me", None)
+
+                if self_user is None:
+                    self_user = await client.get_me()
+
+                self_id = self_user.id
+                ACCOUNT_SELF_IDS[phone] = self_id
+
+            except:
+                return
+
+        if not await is_reply_to_self(client, message, self_id):
             return
 
         raw_text = message.text or message.caption or ""
@@ -1130,6 +1210,17 @@ async def _start_worker(phone: str):
 
         client = await session_manager.get_client(phone, setup=setup)
         acquired = True
+
+        try:
+            self_user = getattr(client, "me", None)
+
+            if self_user is None:
+                self_user = await client.get_me()
+
+            ACCOUNT_SELF_IDS[phone] = self_user.id
+
+        except Exception as e:
+            print(f"❌ Could not get self ID for {phone}: {e}")
 
         scheduler_task = asyncio.create_task(
             smart_scheduler_loop(client, phone)
