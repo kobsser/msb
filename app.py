@@ -36,7 +36,8 @@ from database import (
     get_setting,
     set_setting,
     get_all_settings,
-    update_account_next_run
+    update_account_next_run,
+    reset_fishing_checks
 )
 
 from clients import (
@@ -390,9 +391,12 @@ def reset_timers(phone):
         fishing_next_run=0.0
     )
 
+    reset_fishing_checks(phone)
+
     flash("تایمرها ریست شدند", "success")
 
     return redirect(url_for("account_settings", phone=phone))
+
 
 @app.route("/account/<phone>")
 @login_required
@@ -571,8 +575,28 @@ EDITABLE_SETTINGS = [
     },
     {
         "key": "DYNAMIC_WAIT_TIMEOUT_SECONDS",
-        "label": "Dynamic parse timeout (seconds) — 0 = wait forever for parsed time",
+        "label": "Dynamic parse timeout for Meow (seconds) — 0 = wait forever",
         "type": "number"
+    },
+    {
+        "key": "FISHING_STATUS_CHECK_DELAY",
+        "label": "Fishing status check delay after successful button click (seconds)",
+        "type": "number"
+    },
+    {
+        "key": "FISHING_TIME_CHECK_INTERVAL",
+        "label": "Fishing periodic time check interval (seconds)",
+        "type": "number"
+    },
+    {
+        "key": "BUTTON_CLICK_MAX_RETRIES",
+        "label": "Button click max retries",
+        "type": "number"
+    },
+    {
+        "key": "BUTTON_CLICK_RETRY_DELAY",
+        "label": "Button click retry delay (seconds)",
+        "type": "float"
     },
     {
         "key": "FISHING_CLICK_DELAY",
@@ -595,6 +619,7 @@ EDITABLE_SETTINGS = [
         "type": "text"
     },
 ]
+
 
 @app.route("/admin/settings", methods=["GET", "POST"])
 @admin_required

@@ -27,11 +27,18 @@ DEFAULT_SETTINGS = {
     # Pishi is interval-based
     "PISHI_INTERVAL_SECONDS": "1800",
 
-    # Dynamic features:
-    # 0 = wait forever for parsed bot time
-    # >0 = retry trigger if no parsed response within this many seconds
+    # Dynamic Meow parse timeout
     "DYNAMIC_WAIT_TIMEOUT_SECONDS": "0",
 
+    # Fishing status checks
+    "FISHING_STATUS_CHECK_DELAY": "300",
+    "FISHING_TIME_CHECK_INTERVAL": "900",
+
+    # Button click retry
+    "BUTTON_CLICK_MAX_RETRIES": "10",
+    "BUTTON_CLICK_RETRY_DELAY": "1.0",
+
+    # Click delays
     "FISHING_CLICK_DELAY": "2.0",
     "PISHI_CLICK_DELAY": "1.0",
     "MEOW_CLICK_DELAY": "1.0",
@@ -123,6 +130,8 @@ def init_db():
             meow_next_run BIGINT DEFAULT 0,
             pishi_next_run BIGINT DEFAULT 0,
             fishing_next_run BIGINT DEFAULT 0,
+            fishing_status_check_at BIGINT DEFAULT 0,
+            fishing_periodic_check_at BIGINT DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -171,6 +180,20 @@ def init_db():
                 WHERE table_name='tg_accounts' AND column_name='fishing_next_run'
             ) THEN
                 ALTER TABLE tg_accounts ADD COLUMN fishing_next_run BIGINT DEFAULT 0;
+            END IF;
+
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name='tg_accounts' AND column_name='fishing_status_check_at'
+            ) THEN
+                ALTER TABLE tg_accounts ADD COLUMN fishing_status_check_at BIGINT DEFAULT 0;
+            END IF;
+
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name='tg_accounts' AND column_name='fishing_periodic_check_at'
+            ) THEN
+                ALTER TABLE tg_accounts ADD COLUMN fishing_periodic_check_at BIGINT DEFAULT 0;
             END IF;
         END $$;
     """)
@@ -224,6 +247,38 @@ def init_db():
 
                 ALTER TABLE tg_accounts
                 ALTER COLUMN fishing_next_run
+                SET DEFAULT 0;
+            END IF;
+
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name='tg_accounts'
+                  AND column_name='fishing_status_check_at'
+                  AND data_type <> 'bigint'
+            ) THEN
+                ALTER TABLE tg_accounts
+                ALTER COLUMN fishing_status_check_at
+                TYPE BIGINT
+                USING ROUND(COALESCE(fishing_status_check_at, 0))::BIGINT;
+
+                ALTER TABLE tg_accounts
+                ALTER COLUMN fishing_status_check_at
+                SET DEFAULT 0;
+            END IF;
+
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name='tg_accounts'
+                  AND column_name='fishing_periodic_check_at'
+                  AND data_type <> 'bigint'
+            ) THEN
+                ALTER TABLE tg_accounts
+                ALTER COLUMN fishing_periodic_check_at
+                TYPE BIGINT
+                USING ROUND(COALESCE(fishing_periodic_check_at, 0))::BIGINT;
+
+                ALTER TABLE tg_accounts
+                ALTER COLUMN fishing_periodic_check_at
                 SET DEFAULT 0;
             END IF;
         END $$;
@@ -466,6 +521,9 @@ def _row_to_account(row):
     acc["meow_next_run"] = int(float(acc.get("meow_next_run") or 0))
     acc["pishi_next_run"] = int(float(acc.get("pishi_next_run") or 0))
     acc["fishing_next_run"] = int(float(acc.get("fishing_next_run") or 0))
+
+    acc["fishing_status_check_at"] = int(float(acc.get("fishing_status_check_at") or 0))
+    acc["fishing_periodic_check_at"] = int(float(acc.get("fishing_periodic_check_at") or 0))
 
     # Compatibility alias
     acc["fish_enabled"] = acc["pishi_enabled"]
@@ -782,3 +840,99 @@ def claim_interval_feature(phone, feature, scheduled_timestamp, now):
     except Exception as e:
         print(f"❌ claim_interval_feature error [{phone}] [{feature}]: {e}")
         return False
+
+
+# ============================================================
+# Fishing status / periodic check helpers
+# ============================================================
+
+def update_fishing_status_check_at(phone, timestamp):
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        UPDATE tg_accounts
+        SET fishing_status_check_at = %s
+        WHERE phone = %s
+        """,
+        (int(float(timestamp)), str(phone))
+    )
+
+    conn.commit()
+    cur.close()
+
+
+def claim_fishing_status_check(phone, now):
+    """
+    Atomically claims a scheduled post-click Fishing status check.
+    """
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        UPDATE tg_accounts
+        SET fishing_status_check_at = 0
+        WHERE phone = %s
+          AND fishing_status_check_at > 0
+          AND fishing_status_check_at <= %s
+        """,
+        (str(phone), int(float(now)))
+    )
+
+    conn.commit()
+
+    claimed = cur.rowcount > 0
+
+    cur.close()
+
+    return claimed
+
+
+def claim_fishing_periodic_check(phone, next_check_at, now):
+    """
+    Atomically claims the periodic Fishing time availability check.
+    """
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        UPDATE tg_accounts
+        SET fishing_periodic_check_at = %s
+        WHERE phone = %s
+          AND (
+              fishing_periodic_check_at IS NULL
+              OR fishing_periodic_check_at <= %s
+          )
+        """,
+        (int(float(next_check_at)), str(phone), int(float(now)))
+    )
+
+    conn.commit()
+
+    claimed = cur.rowcount > 0
+
+    cur.close()
+
+    return claimed
+
+
+def reset_fishing_checks(phone):
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        UPDATE tg_accounts
+        SET
+            fishing_status_check_at = 0,
+            fishing_periodic_check_at = 0
+        WHERE phone = %s
+        """,
+        (str(phone),)
+    )
+
+    conn.commit()
+    cur.close()

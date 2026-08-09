@@ -18,7 +18,10 @@ from database import (
     get_setting_int,
     get_setting_float,
     claim_dynamic_feature,
-    claim_interval_feature
+    claim_interval_feature,
+    update_fishing_status_check_at,
+    claim_fishing_status_check,
+    claim_fishing_periodic_check
 )
 
 import session_manager
@@ -243,6 +246,8 @@ def schedule_feature(phone: str, feature: str, seconds: int, jitter: int = 10):
 
 def dynamic_action(account, feature: str, now: float):
     """
+    Used mainly for Meow.
+
     Returns:
       send_initial
       send_due
@@ -330,45 +335,95 @@ def is_meow_response(phone, message, normalized):
     return "میو" in normalized or "میوت" in normalized
 
 
+def schedule_fishing_status_check(phone: str):
+    """
+    Schedules a Fishing status trigger after a successful Fishing button click.
+    """
+    try:
+        delay = setting_int("FISHING_STATUS_CHECK_DELAY", 300)
+        delay = max(0, int(delay))
+
+        timestamp = int(time.time()) + delay
+
+        update_fishing_status_check_at(phone, timestamp)
+
+        print(f"🎣 [{phone}] Fishing status check scheduled in {delay}s")
+
+    except Exception as e:
+        print(f"❌ schedule_fishing_status_check error [{phone}]: {e}")
+
+
 # ============================================================
 # Button helpers
 # ============================================================
 
 async def click_inline_button(message, button, row_index, col_index):
     """
-    Clicks a button safely.
-
-    Priority:
-      1. Click by callback_data
-      2. Click by corrected coordinates: x=column, y=row
-      3. Fallback coordinates for forks expecting row,column
+    Clicks a button safely with configurable retries.
     """
+    max_retries = setting_int("BUTTON_CLICK_MAX_RETRIES", 10)
+    max_retries = max(1, int(max_retries))
+
+    retry_delay = setting_float("BUTTON_CLICK_RETRY_DELAY", 1.0)
+    retry_delay = max(0.0, float(retry_delay))
+
     callback_data = getattr(button, "callback_data", None)
+    last_error = None
 
-    if callback_data:
-        try:
-            await message.click(callback_data=callback_data)
-            return True
-        except TypeError:
-            pass
-        except Exception as e:
-            print(f"❌ callback click error: {e}")
-
-    try:
-        await message.click(col_index, row_index)
-        return True
-    except Exception as e:
-        error_text = str(e).lower()
-
-        if "doesn't exist" in error_text:
+    for attempt in range(1, max_retries + 1):
+        # Preferred: click by callback_data
+        if callback_data:
             try:
-                await message.click(row_index, col_index)
+                await message.click(callback_data=callback_data)
                 return True
-            except Exception as e2:
-                print(f"❌ reversed coordinate click error: {e2}")
 
-        print(f"❌ coordinate click error: {e}")
-        return False
+            except TypeError:
+                # Older fork/version may not support callback_data keyword
+                callback_data = None
+
+            except Exception as e:
+                last_error = e
+                error_text = str(e).lower()
+
+                if "doesn't exist" in error_text:
+                    # Fall back to coordinates
+                    callback_data = None
+                else:
+                    if attempt < max_retries:
+                        print(f"⚠️ Button click retry {attempt}/{max_retries}: {e}")
+                        await asyncio.sleep(retry_delay)
+                        continue
+
+                    break
+
+        # Fallback: click by coordinates
+        try:
+            # Pyrogram/Kurigram normally expects x=column, y=row
+            await message.click(col_index, row_index)
+            return True
+
+        except Exception as e:
+            last_error = e
+            error_text = str(e).lower()
+
+            if "doesn't exist" in error_text:
+                try:
+                    # Fallback for forks expecting row,column
+                    await message.click(row_index, col_index)
+                    return True
+                except Exception as e2:
+                    last_error = e2
+                    break
+
+            if attempt < max_retries:
+                print(f"⚠️ Coordinate click retry {attempt}/{max_retries}: {e}")
+                await asyncio.sleep(retry_delay)
+                continue
+
+            break
+
+    print(f"❌ coordinate click error: {last_error}")
+    return False
 
 
 async def click_second_button(message):
@@ -492,7 +547,7 @@ async def click_meow_claim_buttons(message):
 # Delayed click tasks
 # ============================================================
 
-async def delayed_click_fishing(client, message, msg_key: str):
+async def delayed_click_fishing(client, phone, message, msg_key: str):
     current_task = asyncio.current_task()
 
     try:
@@ -512,6 +567,9 @@ async def delayed_click_fishing(client, message, msg_key: str):
         if await click_second_button(fresh_message):
             _remember_clicked(CLICKED_FISHING_MESSAGES, msg_key)
             print(f"🎣 [{msg_key}] Clicked 2nd fishing button")
+
+            # Always schedule a Fishing status check after successful click
+            schedule_fishing_status_check(phone)
 
     except asyncio.CancelledError:
         return
@@ -589,6 +647,39 @@ async def delayed_click_meow(client, message, msg_key: str):
 
 
 # ============================================================
+# Fishing probe sender
+# ============================================================
+
+async def send_fishing_probe(client, phone: str, chat_ids, reason: str):
+    """
+    Sends a Fishing trigger only to check/parse the next cooldown.
+    """
+    print(f"🎣 [{phone}] Fishing status probe: {reason}")
+
+    for chat_id in chat_ids:
+        try:
+            sent_message = await client.send_message(chat_id, "ماهی")
+
+            if phone not in TRACKED_FISHING_MESSAGES:
+                TRACKED_FISHING_MESSAGES[phone] = {}
+
+            TRACKED_FISHING_MESSAGES[phone][chat_id] = sent_message.id
+
+            print(f"🎣 [{phone}] Fishing probe sent to {chat_id}, tracking message {sent_message.id}")
+
+        except FloodWait as e:
+            wait_seconds = flood_seconds(e)
+            schedule_feature(phone, "fishing", wait_seconds, jitter=20)
+            print(f"⏳ FloodWait Fishing probe [{phone}]: {wait_seconds}s")
+            break
+
+        except Exception as e:
+            print(f"❌ Fishing probe error [{phone}]: {e}")
+
+        await asyncio.sleep(random.uniform(1.0, 3.0))
+
+
+# ============================================================
 # Bot message handler
 # ============================================================
 
@@ -643,7 +734,7 @@ async def handle_bot_message(client, phone: str, message):
                             existing_task.cancel()
 
                         FISHING_CLICK_TASKS[msg_key] = asyncio.create_task(
-                            delayed_click_fishing(client, message, msg_key)
+                            delayed_click_fishing(client, phone, message, msg_key)
                         )
 
         # ============================================================
@@ -841,17 +932,24 @@ async def smart_scheduler_loop(client, phone: str):
                         await asyncio.sleep(random.uniform(1.0, 3.0))
 
             # ============================================================
-            # Fishing — dynamic parsed timing only
+            # Fishing — dynamic parsed timing + status checks
             # ============================================================
+            fishing_sent_this_cycle = False
+
             if account.get("fishing_enabled"):
-                action = dynamic_action(account, "fishing", now)
+                fishing_next_run = int(float(account.get("fishing_next_run") or 0))
 
-                if action in ("send_initial", "send_due", "retry_after_parse_timeout"):
-                    timeout = 0
+                # --------------------------------------------------------
+                # 1. Normal initial/due Fishing trigger
+                # --------------------------------------------------------
+                action = None
 
-                    if action == "retry_after_parse_timeout":
-                        timeout = setting_int("DYNAMIC_WAIT_TIMEOUT_SECONDS", 0)
+                if fishing_next_run == 0:
+                    action = "send_initial"
+                elif fishing_next_run > 0 and now >= fishing_next_run:
+                    action = "send_due"
 
+                if action:
                     waiting_timestamp = -int(time.time())
 
                     claimed = claim_dynamic_feature(
@@ -860,16 +958,20 @@ async def smart_scheduler_loop(client, phone: str):
                         action,
                         waiting_timestamp,
                         now,
-                        timeout
+                        0
                     )
 
                     if not claimed:
                         print(f"⚠️ [{phone}] Fishing trigger skipped: already claimed or state changed")
                     else:
+                        # Clear any old post-click status check because we are starting a fresh attempt
+                        try:
+                            update_fishing_status_check_at(phone, 0)
+                        except:
+                            pass
+
                         if action == "send_initial":
                             print(f"🎣 [{phone}] No saved Fishing time. Sending trigger once.")
-                        elif action == "retry_after_parse_timeout":
-                            print(f"⚠️ [{phone}] Fishing parse timeout. Sending trigger again.")
                         else:
                             print(f"🎣 [{phone}] Fishing due from parsed bot time.")
 
@@ -895,6 +997,69 @@ async def smart_scheduler_loop(client, phone: str):
                                 schedule_feature(phone, "fishing", 60, jitter=10)
 
                             await asyncio.sleep(random.uniform(1.0, 3.0))
+
+                        fishing_sent_this_cycle = True
+
+                # --------------------------------------------------------
+                # 2. Post-click status check
+                # --------------------------------------------------------
+                if not fishing_sent_this_cycle:
+                    status_check_at = int(float(account.get("fishing_status_check_at") or 0))
+
+                    if status_check_at > 0 and now >= status_check_at:
+                        claimed_status = claim_fishing_status_check(phone, now)
+
+                        if claimed_status:
+                            await send_fishing_probe(
+                                client,
+                                phone,
+                                chat_ids,
+                                "post-click status check"
+                            )
+
+                            fishing_sent_this_cycle = True
+
+                # --------------------------------------------------------
+                # 3. Periodic parsed-time availability check
+                # --------------------------------------------------------
+                if not fishing_sent_this_cycle:
+                    periodic_interval = setting_int("FISHING_TIME_CHECK_INTERVAL", 900)
+                    periodic_interval = max(60, int(periodic_interval))
+
+                    periodic_check_at = int(float(account.get("fishing_periodic_check_at") or 0))
+
+                    if now >= periodic_check_at:
+                        next_periodic_check_at = now + periodic_interval
+
+                        claimed_periodic = claim_fishing_periodic_check(
+                            phone,
+                            next_periodic_check_at,
+                            now
+                        )
+
+                        if claimed_periodic:
+                            fresh_account = get_tg_account(phone) or account
+
+                            current_next_run = int(float(fresh_account.get("fishing_next_run") or 0))
+                            status_check_at = int(float(fresh_account.get("fishing_status_check_at") or 0))
+
+                            has_valid_parsed_time = current_next_run > now
+                            has_future_status_check = status_check_at > now
+
+                            if not has_valid_parsed_time and not has_future_status_check:
+                                await send_fishing_probe(
+                                    client,
+                                    phone,
+                                    chat_ids,
+                                    "periodic time check"
+                                )
+
+                                fishing_sent_this_cycle = True
+                            else:
+                                if has_valid_parsed_time:
+                                    print(f"🎣 [{phone}] Periodic check: parsed Fishing time already exists.")
+                                elif has_future_status_check:
+                                    print(f"🎣 [{phone}] Periodic check: waiting for scheduled Fishing status check.")
 
         except Exception as e:
             print(f"❌ scheduler_loop error [{phone}]: {e}")
