@@ -24,9 +24,13 @@ DEFAULT_SETTINGS = {
     "ACCOUNT_START_INTERVAL": "3",
     "STOP_COOLDOWN_SECONDS": "5",
 
-    "MEOW_FALLBACK_SECONDS": "300",
+    # Pishi is interval-based
     "PISHI_INTERVAL_SECONDS": "1800",
-    "FISHING_INTERVAL_SECONDS": "600",
+
+    # Dynamic features:
+    # 0 = wait forever for parsed bot time
+    # >0 = retry trigger if no parsed response within this many seconds
+    "DYNAMIC_WAIT_TIMEOUT_SECONDS": "0",
 
     "FISHING_CLICK_DELAY": "2.0",
     "PISHI_CLICK_DELAY": "1.0",

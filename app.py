@@ -35,7 +35,8 @@ from database import (
     delete_tg_account,
     get_setting,
     set_setting,
-    get_all_settings
+    get_all_settings,
+    update_account_next_run
 )
 
 from clients import (
@@ -373,6 +374,26 @@ def verify_password():
 # Account settings
 # ============================================================
 
+@app.route("/account/<phone>/reset_timers", methods=["POST"])
+@login_required
+def reset_timers(phone):
+    account = get_tg_account(phone)
+
+    if not account or account["owner_id"] != session["user_id"]:
+        flash("اکانت پیدا نشد", "danger")
+        return redirect(url_for("dashboard"))
+
+    update_account_next_run(
+        phone,
+        meow_next_run=0.0,
+        pishi_next_run=0.0,
+        fishing_next_run=0.0
+    )
+
+    flash("تایمرها ریست شدند", "success")
+
+    return redirect(url_for("account_settings", phone=phone))
+
 @app.route("/account/<phone>")
 @login_required
 def account_settings(phone):
@@ -544,18 +565,13 @@ EDITABLE_SETTINGS = [
         "type": "number"
     },
     {
-        "key": "MEOW_FALLBACK_SECONDS",
-        "label": "Meow fallback cooldown (seconds)",
-        "type": "number"
-    },
-    {
         "key": "PISHI_INTERVAL_SECONDS",
-        "label": "Pishi interval (seconds) — default 1800 = 30 minutes",
+        "label": "Pishi interval (seconds) — 1800 = 30 minutes",
         "type": "number"
     },
     {
-        "key": "FISHING_INTERVAL_SECONDS",
-        "label": "Fishing fallback interval (seconds)",
+        "key": "DYNAMIC_WAIT_TIMEOUT_SECONDS",
+        "label": "Dynamic parse timeout (seconds) — 0 = wait forever for parsed time",
         "type": "number"
     },
     {
@@ -579,7 +595,6 @@ EDITABLE_SETTINGS = [
         "type": "text"
     },
 ]
-
 
 @app.route("/admin/settings", methods=["GET", "POST"])
 @admin_required

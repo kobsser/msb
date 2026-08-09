@@ -247,6 +247,65 @@ def schedule_feature(phone: str, feature: str, seconds: int, jitter: int = 10):
         return None
 
 
+def mark_feature_waiting(phone: str, feature: str):
+    """
+    Marks a dynamic feature as waiting for parsed bot time.
+
+    We store a negative timestamp:
+      -time.time()
+
+    So:
+      next_run > 0  -> scheduled parsed time
+      next_run == 0 -> no saved time, send initial trigger
+      next_run < 0  -> waiting for parsed response
+    """
+    try:
+        waiting_timestamp = -time.time()
+
+        if feature == "meow":
+            update_account_next_run(phone, meow_next_run=waiting_timestamp)
+        elif feature == "fishing":
+            update_account_next_run(phone, fishing_next_run=waiting_timestamp)
+
+        print(f"⏳ [{phone}] {feature} is waiting for parsed bot time")
+
+    except Exception as e:
+        print(f"❌ mark_feature_waiting error [{phone}] [{feature}]: {e}")
+
+
+def dynamic_action(account, feature: str, now: float):
+    """
+    Returns:
+      send_initial
+      send_due
+      retry_after_parse_timeout
+      waiting
+      not_due
+    """
+    next_run = float(account.get(f"{feature}_next_run") or 0.0)
+
+    # No saved parsed time yet
+    if next_run == 0.0:
+        return "send_initial"
+
+    # Waiting for parsed bot response
+    if next_run < 0.0:
+        timeout = setting_int("DYNAMIC_WAIT_TIMEOUT_SECONDS", 0)
+        timeout = max(0, int(timeout))
+
+        waiting_since = -next_run
+
+        if timeout > 0 and now - waiting_since > timeout:
+            return "retry_after_parse_timeout"
+
+        return "waiting"
+
+    # Parsed time reached
+    if now >= next_run:
+        return "send_due"
+
+    return "not_due"
+
 def get_selected_chat_ids(user):
     chat_ids = []
 
@@ -718,37 +777,45 @@ async def smart_scheduler_loop(client, phone: str):
             now = time.time()
 
             # ============================================================
-            # Meow
+            # Meow — dynamic parsed timing only
             # ============================================================
-            if account.get("meow_enabled") and now >= float(account.get("meow_next_run") or 0.0):
-                fallback = setting_int("MEOW_FALLBACK_SECONDS", 300)
+            if account.get("meow_enabled"):
+                action = dynamic_action(account, "meow", now)
 
-                schedule_feature(phone, "meow", fallback, jitter=8)
+                if action in ("send_initial", "send_due", "retry_after_parse_timeout"):
+                    if action == "send_initial":
+                        print(f"😺 [{phone}] No saved Meow time. Sending trigger once.")
+                    elif action == "retry_after_parse_timeout":
+                        print(f"⚠️ [{phone}] Meow parse timeout. Sending trigger again.")
+                    else:
+                        print(f"😺 [{phone}] Meow due from parsed bot time.")
 
-                print(f"😺 [{phone}] Meow due. Fallback next run in {fallback}s")
+                    # Mark waiting BEFORE sending.
+                    # If the bot responds quickly, parsed response will overwrite this.
+                    mark_feature_waiting(phone, "meow")
 
-                for chat_id in chat_ids:
-                    try:
-                        sent_message = await client.send_message(chat_id, "میو")
+                    for chat_id in chat_ids:
+                        try:
+                            sent_message = await client.send_message(chat_id, "میو")
 
-                        if phone not in MEOW_TRACKED_MESSAGES:
-                            MEOW_TRACKED_MESSAGES[phone] = {}
+                            if phone not in MEOW_TRACKED_MESSAGES:
+                                MEOW_TRACKED_MESSAGES[phone] = {}
 
-                        MEOW_TRACKED_MESSAGES[phone][chat_id] = sent_message.id
+                            MEOW_TRACKED_MESSAGES[phone][chat_id] = sent_message.id
 
-                        print(f"😺 [{phone}] Meow sent to {chat_id}, tracking message {sent_message.id}")
+                            print(f"😺 [{phone}] Meow sent to {chat_id}, tracking message {sent_message.id}")
 
-                    except FloodWait as e:
-                        wait_seconds = flood_seconds(e)
-                        schedule_feature(phone, "meow", wait_seconds, jitter=20)
-                        print(f"⏳ FloodWait Meow [{phone}]: {wait_seconds}s")
-                        break
+                        except FloodWait as e:
+                            wait_seconds = flood_seconds(e)
+                            schedule_feature(phone, "meow", wait_seconds, jitter=20)
+                            print(f"⏳ FloodWait Meow [{phone}]: {wait_seconds}s")
+                            break
 
-                    except Exception as e:
-                        print(f"❌ Meow error [{phone}]: {e}")
-                        schedule_feature(phone, "meow", 60, jitter=10)
+                        except Exception as e:
+                            print(f"❌ Meow error [{phone}]: {e}")
+                            schedule_feature(phone, "meow", 60, jitter=10)
 
-                    await asyncio.sleep(random.uniform(1.0, 3.0))
+                        await asyncio.sleep(random.uniform(1.0, 3.0))
 
             # ============================================================
             # Pishi
@@ -776,35 +843,45 @@ async def smart_scheduler_loop(client, phone: str):
                     await asyncio.sleep(random.uniform(1.0, 3.0))
 
             # ============================================================
-            # Fishing
+            # Fishing — dynamic parsed timing only
             # ============================================================
-            if account.get("fishing_enabled") and now >= float(account.get("fishing_next_run") or 0.0):
-                interval = setting_int("FISHING_INTERVAL_SECONDS", 600)
+            if account.get("fishing_enabled"):
+                action = dynamic_action(account, "fishing", now)
 
-                schedule_feature(phone, "fishing", interval, jitter=20)
+                if action in ("send_initial", "send_due", "retry_after_parse_timeout"):
+                    if action == "send_initial":
+                        print(f"🎣 [{phone}] No saved Fishing time. Sending trigger once.")
+                    elif action == "retry_after_parse_timeout":
+                        print(f"⚠️ [{phone}] Fishing parse timeout. Sending trigger again.")
+                    else:
+                        print(f"🎣 [{phone}] Fishing due from parsed bot time.")
 
-                for chat_id in chat_ids:
-                    try:
-                        sent_message = await client.send_message(chat_id, "ماهی")
+                    # Mark waiting BEFORE sending.
+                    # If the bot responds quickly, parsed response will overwrite this.
+                    mark_feature_waiting(phone, "fishing")
 
-                        if phone not in TRACKED_FISHING_MESSAGES:
-                            TRACKED_FISHING_MESSAGES[phone] = {}
+                    for chat_id in chat_ids:
+                        try:
+                            sent_message = await client.send_message(chat_id, "ماهی")
 
-                        TRACKED_FISHING_MESSAGES[phone][chat_id] = sent_message.id
+                            if phone not in TRACKED_FISHING_MESSAGES:
+                                TRACKED_FISHING_MESSAGES[phone] = {}
 
-                        print(f"🎣 [{phone}] Fishing sent to {chat_id}, tracking message {sent_message.id}")
+                            TRACKED_FISHING_MESSAGES[phone][chat_id] = sent_message.id
 
-                    except FloodWait as e:
-                        wait_seconds = flood_seconds(e)
-                        schedule_feature(phone, "fishing", wait_seconds, jitter=20)
-                        print(f"⏳ FloodWait Fishing [{phone}]: {wait_seconds}s")
-                        break
+                            print(f"🎣 [{phone}] Fishing sent to {chat_id}, tracking message {sent_message.id}")
 
-                    except Exception as e:
-                        print(f"❌ Fishing error [{phone}]: {e}")
-                        schedule_feature(phone, "fishing", 60, jitter=10)
+                        except FloodWait as e:
+                            wait_seconds = flood_seconds(e)
+                            schedule_feature(phone, "fishing", wait_seconds, jitter=20)
+                            print(f"⏳ FloodWait Fishing [{phone}]: {wait_seconds}s")
+                            break
 
-                    await asyncio.sleep(random.uniform(1.0, 3.0))
+                        except Exception as e:
+                            print(f"❌ Fishing error [{phone}]: {e}")
+                            schedule_feature(phone, "fishing", 60, jitter=10)
+
+                        await asyncio.sleep(random.uniform(1.0, 3.0))
 
         except Exception as e:
             print(f"❌ scheduler_loop error [{phone}]: {e}")
