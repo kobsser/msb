@@ -1,76 +1,83 @@
 {% extends "base.html" %}
+{% block title %}تنظیمات اکانت{% endblock %}
 {% block content %}
-<div class="card p-4">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h4>تنظیمات {{ acc.phone }}</h4>
+<div class="card bg-base-100 shadow-xl">
+    <div class="card-body">
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+            <h2 class="card-title text-2xl">تنظیمات {{ acc.phone }}</h2>
 
-        <div class="d-flex gap-2">
-            <form action="{{ url_for('reset_timers', phone=acc.phone) }}" method="POST" class="d-inline"
-                onsubmit="return confirm('Reset all timers?');">
-                <button type="submit" class="btn btn-sm btn-outline-warning">
-                    ⏱ ریست تایمرها
-                </button>
-            </form>
+            <div class="flex gap-2">
+                <form action="{{ url_for('reset_timers', phone=acc.phone) }}" method="POST" class="inline"
+                    onsubmit="return confirm('Reset all timers?');">
+                    <button type="submit" class="btn btn-outline btn-warning btn-sm">
+                        ⏱ ریست تایمرها
+                    </button>
+                </form>
 
-            <form action="{{ url_for('refresh_groups', phone=acc.phone) }}" method="POST" class="d-inline">
-                <button type="submit" class="btn btn-sm btn-outline-secondary">
-                    🔄 بروزرسانی گروه‌ها
-                </button>
-            </form>
-        </div>
-    </div>
-
-    <form action="{{ url_for('save_account_settings', phone=acc.phone) }}" method="POST">
-        <div class="form-check form-switch mb-3">
-            <input class="form-check-input" type="checkbox" name="meow_enabled" id="meow" {% if acc.meow_enabled
-                %}checked{% endif %}>
-            <label class="form-check-label fw-bold" for="meow">فعالسازی میو (Meow)</label>
+                <form action="{{ url_for('refresh_groups', phone=acc.phone) }}" method="POST" class="inline">
+                    <button type="submit" class="btn btn-outline btn-secondary btn-sm">
+                        🔄 بروزرسانی گروه‌ها
+                    </button>
+                </form>
+            </div>
         </div>
 
-        <div class="form-check form-switch mb-3">
-            <input class="form-check-input" type="checkbox" name="pishi_enabled" id="pishi" {% if acc.pishi_enabled
-                %}checked{% endif %}>
-            <label class="form-check-label fw-bold" for="pishi">فعالسازی پیشی (Pishi)</label>
-        </div>
-
-        <div class="form-check form-switch mb-4">
-            <input class="form-check-input" type="checkbox" name="fishing_enabled" id="fishing" {% if
-                acc.fishing_enabled %}checked{% endif %}>
-            <label class="form-check-label fw-bold" for="fishing">فعالسازی ماهیگیری (Fishing)</label>
-        </div>
-
-        <hr>
-
-        <h5 class="mb-3">گروه‌های هدف</h5>
-
-        <div class="mb-3"
-            style="max-height: 300px; overflow-y: auto; border: 1px solid #ddd; padding: 15px; border-radius: 8px;">
-            {% for group in acc.cached_groups %}
-            <div class="form-check mb-2">
-                <input class="form-check-input" type="checkbox" name="groups" value="{{ group.id }}"
-                    id="g_{{ group.id }}" {% if group.id|string in acc.selected_groups %}checked{% endif %}>
-                <label class="form-check-label" for="g_{{ group.id }}">
-                    {{ group.title }}
-                    <span class="badge bg-secondary">{{ group.members or 0 }}👤</span>
+        <form action="{{ url_for('save_account_settings', phone=acc.phone) }}" method="POST">
+            <div class="form-control mb-3">
+                <label class="cursor-pointer label justify-start gap-3 p-0">
+                    <input type="checkbox" name="meow_enabled" class="toggle toggle-primary" {% if acc.meow_enabled %}checked{% endif %} />
+                    <span class="label-text font-bold text-lg">فعالسازی میو (Meow)</span>
                 </label>
             </div>
-            {% else %}
-            <p class="text-danger text-center mb-0">
-                هیچ گروهی پیدا نشد. ابتدا روی "بروزرسانی گروه‌ها" کلیک کنید.
-            </p>
-            {% endfor %}
-        </div>
 
-        <div class="mb-4">
-            <label class="form-label">افزودن دستی آیدی گروه</label>
-            <input type="text" name="manual_group_id" class="form-control" placeholder="-100123456789">
-            <div class="form-text">
-                اگر گروه در لیست بالا نیست، آیدی عددی آن را اینجا وارد کنید.
+            <div class="form-control mb-3">
+                <label class="cursor-pointer label justify-start gap-3 p-0">
+                    <input type="checkbox" name="pishi_enabled" class="toggle toggle-secondary" {% if acc.pishi_enabled %}checked{% endif %} />
+                    <span class="label-text font-bold text-lg">فعالسازی پیشی (Pishi)</span>
+                </label>
             </div>
-        </div>
 
-        <button type="submit" class="btn btn-primary w-100 mb-3">ذخیره تنظیمات</button>
-        <a href="{{ url_for('dashboard') }}" class="btn btn-light w-100">بازگشت</a>
-    </form>
+            <div class="form-control mb-6">
+                <label class="cursor-pointer label justify-start gap-3 p-0">
+                    <input type="checkbox" name="fishing_enabled" class="toggle toggle-accent" {% if acc.fishing_enabled %}checked{% endif %} />
+                    <span class="label-text font-bold text-lg">فعالسازی ماهیگیری (Fishing)</span>
+                </label>
+            </div>
+
+            <div class="divider"></div>
+
+            <h3 class="text-xl font-bold mb-4">گروه‌های هدف</h3>
+
+            <div class="form-control mb-4 max-h-64 overflow-y-auto bg-base-200 p-4 rounded-lg">
+                {% for group in acc.cached_groups %}
+                <label class="cursor-pointer label justify-start gap-3 hover:bg-base-300 rounded-lg p-2 mb-1 transition-colors">
+                    <input type="checkbox" name="groups" value="{{ group.id }}" class="checkbox checkbox-sm"
+                        id="g_{{ group.id }}" {% if group.id|string in acc.selected_groups %}checked{% endif %} />
+                    <span class="label-text flex justify-between w-full items-center">
+                        <span>{{ group.title }}</span>
+                        <span class="badge badge-ghost badge-sm">{{ group.members or 0 }}👤</span>
+                    </span>
+                </label>
+                {% else %}
+                <p class="text-error text-center my-4">
+                    هیچ گروهی پیدا نشد. ابتدا روی "بروزرسانی گروه‌ها" کلیک کنید.
+                </p>
+                {% endfor %}
+            </div>
+
+            <div class="form-control mb-6">
+                <label class="label">
+                    <span class="label-text">افزودن دستی آیدی گروه</span>
+                </label>
+                <input type="text" name="manual_group_id" class="input input-bordered" placeholder="-100123456789" dir="ltr">
+                <label class="label">
+                    <span class="label-text-alt">اگر گروه در لیست بالا نیست، آیدی عددی آن را اینجا وارد کنید.</span>
+                </label>
+            </div>
+
+            <button type="submit" class="btn btn-primary w-full mb-3">ذخیره تنظیمات</button>
+            <a href="{{ url_for('dashboard') }}" class="btn btn-outline w-full">بازگشت</a>
+        </form>
+    </div>
 </div>
 {% endblock %}

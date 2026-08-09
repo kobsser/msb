@@ -1,20 +1,23 @@
 {% extends "base.html" %}
+{% block title %}افزودن اکانت{% endblock %}
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-md-5">
-        <div class="card p-4 mt-5">
-            <h3 class="text-center mb-4">افزودن اکانت تلگرام</h3>
-
+<div class="flex justify-center">
+    <div class="card w-full max-w-md bg-base-100 shadow-xl mt-8">
+        <div class="card-body">
+            <h2 class="card-title justify-center text-2xl mb-4">افزودن اکانت تلگرام</h2>
             <form method="POST">
-                <div class="mb-3">
-                    <label class="form-label">شماره تلفن (با کد کشور)</label>
-                    <input type="text" name="phone" class="form-control" placeholder="+989123456789" required>
+                <div class="form-control w-full mb-4">
+                    <label class="label">
+                        <span class="label-text">شماره تلفن (با کد کشور)</span>
+                    </label>
+                    <input type="text" name="phone" placeholder="+989123456789" required 
+                           class="input input-bordered w-full" dir="ltr" />
                 </div>
 
-                <button type="submit" class="btn btn-primary w-100">دریافت کد تایید</button>
+                <button type="submit" class="btn btn-primary w-full">دریافت کد تایید</button>
 
-                <div class="text-center mt-3">
-                    <a href="{{ url_for('dashboard') }}">بازگشت</a>
+                <div class="text-center mt-4">
+                    <a href="{{ url_for('dashboard') }}" class="link link-hover text-sm">بازگشت</a>
                 </div>
             </form>
         </div>

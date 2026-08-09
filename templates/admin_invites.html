@@ -1,43 +1,47 @@
 {% extends "base.html" %}
+{% block title %}کدهای دعوت{% endblock %}
 {% block content %}
-<div class="card p-4">
-    <h4 class="mb-4">مدیریت کدهای دعوت</h4>
+<div class="card bg-base-100 shadow-xl">
+    <div class="card-body">
+        <div class="flex justify-between items-center mb-6">
+            <h2 class="card-title text-2xl">مدیریت کدهای دعوت</h2>
+            <form method="POST">
+                <button type="submit" class="btn btn-success btn-sm">+ ایجاد کد دعوت جدید</button>
+            </form>
+        </div>
 
-    <form method="POST" class="mb-4">
-        <button type="submit" class="btn btn-success">+ ایجاد کد دعوت جدید</button>
-    </form>
-
-    <div class="table-responsive">
-        <table class="table table-hover">
-            <thead>
-                <tr>
-                    <th>کد دعوت</th>
-                    <th>وضعیت</th>
-                    <th>لینک ثبت نام</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for inv in invites %}
-                <tr>
-                    <td><code>{{ inv.code }}</code></td>
-                    <td>
-                        {% if inv.used %}
-                            <span class="badge bg-secondary">استفاده شده</span>
-                        {% else %}
-                            <span class="badge bg-success">فعال</span>
-                        {% endif %}
-                    </td>
-                    <td>
-                        {% if not inv.used %}
-                        <a href="{{ url_for('register', code=inv.code, _external=True) }}" target="_blank" class="small text-decoration-none">
-                            لینک ثبت نام ↗
-                        </a>
-                        {% endif %}
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+        <div class="overflow-x-auto">
+            <table class="table table-zebra">
+                <thead>
+                    <tr>
+                        <th>کد دعوت</th>
+                        <th>وضعیت</th>
+                        <th>لینک ثبت نام</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for inv in invites %}
+                    <tr>
+                        <td><code class="bg-base-300 px-2 py-1 rounded">{{ inv.code }}</code></td>
+                        <td>
+                            {% if inv.used %}
+                                <span class="badge badge-ghost">استفاده شده</span>
+                            {% else %}
+                                <span class="badge badge-success">فعال</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if not inv.used %}
+                            <a href="{{ url_for('register', code=inv.code, _external=True) }}" target="_blank" class="link link-primary text-sm">
+                                لینک ثبت نام ↗
+                            </a>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
     </div>
 </div>
 {% endblock %}

@@ -1,63 +1,56 @@
 {% extends "base.html" %}
+{% block title %}داشبورد{% endblock %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
-    <h2>اکانت‌های من</h2>
+<div class="flex justify-between items-center mb-6">
+    <h2 class="text-2xl font-bold">اکانت‌های من</h2>
     <a href="{{ url_for('add_account') }}" class="btn btn-primary">+ افزودن اکانت جدید</a>
 </div>
 
 {% if accounts %}
-<div class="row">
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
     {% for acc in accounts %}
-    <div class="col-md-6 mb-4">
-        <div class="card h-100">
-            <div class="card-body">
-                <h5 class="card-title">📱 {{ acc.phone }}</h5>
-
-                <div class="mb-3">
-                    <span class="badge bg-{{ 'success' if acc.is_active else 'secondary' }}">
-                        {{ '🟢 فعال' if acc.is_active else '⚪ غیرفعال' }}
-                    </span>
-
-                    <span class="badge bg-info">
-                        {{ 'میو: روشن' if acc.meow_enabled else 'میو: خاموش' }}
-                    </span>
-
-                    <span class="badge bg-warning text-dark">
-                        {{ 'پیشی: روشن' if acc.pishi_enabled else 'پیشی: خاموش' }}
-                    </span>
-
-                    <span class="badge bg-primary">
-                        {{ 'ماهی: روشن' if acc.fishing_enabled else 'ماهی: خاموش' }}
-                    </span>
+    <div class="card bg-base-100 shadow-xl">
+        <div class="card-body">
+            <h2 class="card-title flex items-center gap-2">
+                📱 {{ acc.phone }}
+            </h2>
+            <div class="flex flex-wrap gap-2 mt-2">
+                <div class="badge {% if acc.is_active %}badge-success{% else %}badge-ghost{% endif %} gap-2">
+                    {% if acc.is_active %}🟢 فعال{% else %}⚪ غیرفعال{% endif %}
                 </div>
-
-                <p class="text-muted small mb-3">
-                    گروه‌ها: {{ acc.selected_groups | length }} انتخاب شده
-                </p>
-
-                <div class="d-flex gap-2">
-                    <a href="{{ url_for('account_settings', phone=acc.phone) }}" class="btn btn-sm btn-outline-primary flex-fill">
-                        تنظیمات
-                    </a>
-
-                    <form action="{{ url_for('toggle_account', phone=acc.phone) }}" method="POST" class="flex-fill">
-                        <button type="submit" class="btn btn-sm btn-outline-{{ 'danger' if acc.is_active else 'success' }} w-100">
-                            {{ 'توقف' if acc.is_active else 'شروع' }}
-                        </button>
-                    </form>
-
-                    <form action="{{ url_for('delete_account', phone=acc.phone) }}" method="POST" onsubmit="return confirm('آیا از حذف این اکانت مطمئن هستید؟');">
-                        <button type="submit" class="btn btn-sm btn-outline-danger">حذف</button>
-                    </form>
+                <div class="badge badge-info gap-2">
+                    میو: {{ 'روشن' if acc.meow_enabled else 'خاموش' }}
                 </div>
+                <div class="badge badge-warning text-neutral gap-2">
+                    پیشی: {{ 'روشن' if acc.pishi_enabled else 'خاموش' }}
+                </div>
+                <div class="badge badge-primary gap-2">
+                    ماهی: {{ 'روشن' if acc.fishing_enabled else 'خاموش' }}
+                </div>
+            </div>
+
+            <p class="text-sm text-base-content/70 mt-2">
+                گروه‌ها: {{ acc.selected_groups | length }} انتخاب شده
+            </p>
+
+            <div class="card-actions justify-end mt-4">
+                <a href="{{ url_for('account_settings', phone=acc.phone) }}" class="btn btn-outline btn-primary btn-sm">تنظیمات</a>
+                <form action="{{ url_for('toggle_account', phone=acc.phone) }}" method="POST">
+                    <button type="submit" class="btn btn-sm {% if acc.is_active %}btn-outline btn-error{% else %}btn-outline btn-success{% endif %}">
+                        {{ 'توقف' if acc.is_active else 'شروع' }}
+                    </button>
+                </form>
+                <form action="{{ url_for('delete_account', phone=acc.phone) }}" method="POST" onsubmit="return confirm('آیا از حذف این اکانت مطمئن هستید؟');">
+                    <button type="submit" class="btn btn-outline btn-error btn-sm">حذف</button>
+                </form>
             </div>
         </div>
     </div>
     {% endfor %}
 </div>
 {% else %}
-<div class="alert alert-info text-center mt-5">
-    هنوز اکانتی اضافه نکرده‌اید. روی "افزودن اکانت جدید" کلیک کنید.
+<div role="alert" class="alert alert-info mt-5 shadow-lg justify-center">
+    <span>هنوز اکانتی اضافه نکرده‌اید. روی "افزودن اکانت جدید" کلیک کنید.</span>
 </div>
 {% endif %}
 {% endblock %}

@@ -1,23 +1,30 @@
 {% extends "base.html" %}
+{% block title %}تنظیمات ادمین{% endblock %}
 {% block content %}
-<div class="card p-4">
-    <h4 class="mb-4">Admin Settings</h4>
+<div class="card bg-base-100 shadow-xl max-w-3xl mx-auto">
+    <div class="card-body">
+        <h2 class="card-title text-2xl mb-6">Admin Settings</h2>
 
-    <form method="POST">
-        {% for item in editable_settings %}
-        <div class="mb-3">
-            <label class="form-label">{{ item.label }}</label>
-            <input
-                type="text"
-                name="{{ item.key }}"
-                class="form-control"
-                value="{{ settings.get(item.key, '') }}"
-            >
-            <div class="form-text">Key: {{ item.key }}</div>
-        </div>
-        {% endfor %}
+        <form method="POST">
+            {% for item in editable_settings %}
+            <div class="form-control mb-4">
+                <label class="label">
+                    <span class="label-text font-bold">{{ item.label }}</span>
+                </label>
+                <input
+                    type="text"
+                    name="{{ item.key }}"
+                    class="input input-bordered w-full"
+                    value="{{ settings.get(item.key, '') }}"
+                >
+                <label class="label">
+                    <span class="label-text-alt opacity-50">Key: {{ item.key }}</span>
+                </label>
+            </div>
+            {% endfor %}
 
-        <button type="submit" class="btn btn-primary w-100">Save Settings</button>
-    </form>
+            <button type="submit" class="btn btn-primary w-full">ذخیره تنظیمات</button>
+        </form>
+    </div>
 </div>
 {% endblock %}

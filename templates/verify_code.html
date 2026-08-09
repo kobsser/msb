@@ -1,17 +1,15 @@
 {% extends "base.html" %}
+{% block title %}کد تایید تلگرام{% endblock %}
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-md-5">
-        <div class="card p-4 mt-5">
-            <h3 class="text-center mb-4">کد تایید تلگرام</h3>
-            <p class="text-center text-muted">کد ارسال شده به {{ phone }} را وارد کنید</p>
+<div class="flex justify-center">
+    <div class="card w-full max-w-md bg-base-100 shadow-xl mt-12">
+        <div class="card-body">
+            <h2 class="card-title justify-center text-2xl mb-2">کد تایید تلگرام</h2>
+            <p class="text-center text-base-content/70 mb-4">کد ارسال شده به <span dir="ltr">{{ phone }}</span> را وارد کنید</p>
 
             <form method="POST" action="{{ url_for('verify_code') }}">
-                <div class="mb-3">
-                    <input type="text" name="code" class="form-control text-center" placeholder="12345" required>
-                </div>
-
-                <button type="submit" class="btn btn-primary w-100">تایید</button>
+                <input type="text" name="code" class="input input-bordered w-full text-center mb-4" placeholder="12345" required dir="ltr" />
+                <button type="submit" class="btn btn-primary w-full">تایید</button>
             </form>
         </div>
     </div>

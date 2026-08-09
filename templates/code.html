@@ -1,16 +1,22 @@
 {% extends "base.html" %}
 {% block title %}کد تایید{% endblock %}
 {% block content %}
-<div class="max-w-md mx-auto bg-white rounded-xl shadow-md p-8 mt-10">
-    <h1 class="text-2xl font-bold text-center mb-2">کد تایید</h1>
-    <p class="text-center text-gray-600 mb-6">کد ارسال شده به <span class="font-bold" dir="ltr">{{ phone }}</span> را وارد کنید</p>
-    <form method="POST" action="{{ url_for('verify_code') }}">
-        <input type="text" name="code" placeholder="کد ۵ رقمی" required autofocus
-               class="w-full border rounded-lg px-4 py-3 mb-4 text-center text-xl tracking-widest focus:outline-none focus:ring-2 focus:ring-blue-500"
-               dir="ltr">
-        <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-lg">
-            تایید کد
-        </button>
-    </form>
+<div class="flex justify-center">
+    <div class="card w-full max-w-md bg-base-100 shadow-xl mt-12">
+        <div class="card-body">
+            <h1 class="card-title justify-center text-2xl mb-2">کد تایید</h1>
+            <p class="text-center text-base-content/70 mb-6">
+                کد ارسال شده به <span class="font-bold" dir="ltr">{{ phone }}</span> را وارد کنید
+            </p>
+            <form method="POST" action="{{ url_for('verify_code') }}">
+                <input type="text" name="code" placeholder="کد ۵ رقمی" required autofocus
+                       class="input input-bordered w-full mb-4 text-center text-xl tracking-widest"
+                       dir="ltr" />
+                <button type="submit" class="btn btn-success w-full">
+                    تایید کد
+                </button>
+            </form>
+        </div>
+    </div>
 </div>
 {% endblock %}
