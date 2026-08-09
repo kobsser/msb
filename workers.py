@@ -12,6 +12,10 @@ from config import API_ID, API_HASH, BOT_USER_ID
 from database import get_tg_account, get_all_tg_accounts
 
 
+# ============================================================
+# Globals
+# ============================================================
+
 WORKERS = {}
 STARTING = set()
 
@@ -21,22 +25,21 @@ MEOW_NEXT_RUN = {}
 PISHI_NEXT_RUN = {}
 FISHING_NEXT_RUN = {}
 
+MEOW_TRACKED_MESSAGES = {}
 TRACKED_FISHING_MESSAGES = {}
+
 CLICKED_FISHING_MESSAGES = set()
-FISHING_CLICK_TASKS = {}
-
 PISHI_CLICKED_MESSAGES = set()
-PISHI_CLICK_TASKS = {}
+MEOW_CLICKED_MESSAGES = set()
 
-try:
-    PISHI_CLICK_DELAY = float(os.getenv("PISHI_CLICK_DELAY", "1.0"))
-except:
-    PISHI_CLICK_DELAY = 1.0
+FISHING_CLICK_TASKS = {}
+PISHI_CLICK_TASKS = {}
+MEOW_CLICK_TASKS = {}
 
 FA_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789")
 
 COOLDOWN_RE = re.compile(
-    r"(?:بعد از|باید)\s*(?P<time>\d{1,3}(?::\d{1,2}(?::\d{1,2})?)?)"
+    r"(?:بعد از|باید|تا)\s*(?P<time>\d{1,3}(?:[:：.]\d{1,2}(?:[:：.]\d{1,2})?)?)"
 )
 
 try:
@@ -44,10 +47,26 @@ try:
 except:
     FISHING_CLICK_DELAY = 2.0
 
+try:
+    PISHI_CLICK_DELAY = float(os.getenv("PISHI_CLICK_DELAY", "1.0"))
+except:
+    PISHI_CLICK_DELAY = 1.0
 
-# -------------------------
-# Loop helpers
-# -------------------------
+try:
+    MEOW_CLICK_DELAY = float(os.getenv("MEOW_CLICK_DELAY", "1.0"))
+except:
+    MEOW_CLICK_DELAY = 1.0
+
+# "ms" = two-part time means minutes:seconds
+# "hm" = two-part time means hours:minutes
+TWO_PART_TIME_MODE = os.getenv("TWO_PART_TIME_MODE", "ms").lower()
+if TWO_PART_TIME_MODE not in ("ms", "hm"):
+    TWO_PART_TIME_MODE = "ms"
+
+
+# ============================================================
+# Event loop helpers
+# ============================================================
 
 def _get_loop(loop=None):
     global _GLOBAL_LOOP
@@ -85,16 +104,9 @@ def _schedule_coroutine(coro, loop=None):
     asyncio.run_coroutine_threadsafe(coro, target_loop)
 
 
-# -------------------------
+# ============================================================
 # Text / cooldown helpers
-# -------------------------
-
-def _remember_clicked(storage, key, limit=5000):
-    storage.add(key)
-
-    if len(storage) > limit:
-        storage.clear()
-
+# ============================================================
 
 def normalize_text(text: str) -> str:
     if not text:
@@ -103,6 +115,7 @@ def normalize_text(text: str) -> str:
     text = text.replace("\u200c", " ")
     text = text.replace("\u200e", "")
     text = text.replace("\u200f", "")
+    text = text.replace("：", ":")
     text = text.translate(FA_DIGITS)
 
     return text
@@ -110,7 +123,9 @@ def normalize_text(text: str) -> str:
 
 def parse_cooldown_seconds(text: str):
     """
-    Parses:
+    Parses cooldown time from raw bot text.
+
+    Examples:
       بعد از 4:30
       باید 59:02 صبر کنی
       1:02:03
@@ -118,13 +133,44 @@ def parse_cooldown_seconds(text: str):
       2 ساعت
       45 ثانیه
 
-    Two-part time is minutes:seconds.
+    TWO_PART_TIME_MODE:
+      ms -> 4:30 = 4 minutes 30 seconds
+      hm -> 4:30 = 4 hours 30 minutes
     """
     text = normalize_text(text)
 
     if not text:
         return None
 
+    match = COOLDOWN_RE.search(text)
+
+    # If it's a colon/dot time like 4:30 or 1:02:03, parse it first
+    if match and re.search(r"[:：.]", match.group("time")):
+        parts = []
+
+        for part in re.split(r"[:：.]", match.group("time")):
+            if part == "":
+                continue
+
+            try:
+                parts.append(int(part))
+            except:
+                pass
+
+        if parts:
+            if len(parts) == 3:
+                hours, minutes, secs = parts
+            elif len(parts) == 2:
+                if TWO_PART_TIME_MODE == "hm":
+                    hours, minutes, secs = parts[0], parts[1], 0
+                else:
+                    hours, minutes, secs = 0, parts[0], parts[1]
+            else:
+                hours, minutes, secs = 0, parts[0], 0
+
+            return max(0, hours * 3600 + minutes * 60 + secs)
+
+    # Try explicit unit parsing: 2 ساعت، 30 دقیقه، 45 ثانیه
     seconds = 0
     found = False
 
@@ -136,9 +182,9 @@ def parse_cooldown_seconds(text: str):
     ]
 
     for pattern, multiplier in patterns:
-        for match in re.finditer(pattern, text, re.IGNORECASE):
+        for m in re.finditer(pattern, text, re.IGNORECASE):
             try:
-                seconds += int(match.group(1)) * multiplier
+                seconds += int(m.group(1)) * multiplier
                 found = True
             except:
                 pass
@@ -146,38 +192,20 @@ def parse_cooldown_seconds(text: str):
     if found:
         return max(0, seconds)
 
-    match = COOLDOWN_RE.search(text)
-    if not match:
-        return None
-
-    parts = []
-
-    for part in match.group("time").split(":"):
-        if part == "":
-            continue
-
+    # If only a single number was found, assume minutes
+    if match:
         try:
-            parts.append(int(part))
+            value = int(match.group("time"))
+            return max(0, value * 60)
         except:
-            pass
+            return None
 
-    if not parts:
-        return None
-
-    if len(parts) == 3:
-        hours, minutes, secs = parts
-    elif len(parts) == 2:
-        # minutes:seconds
-        hours, minutes, secs = 0, parts[0], parts[1]
-    else:
-        # single number: assume minutes
-        hours, minutes, secs = 0, parts[0], 0
-
-    return max(0, hours * 3600 + minutes * 60 + secs)
+    return None
 
 
 def set_next_run(storage, phone: str, seconds: int, jitter: int = 10):
-    storage[str(phone)] = time.time() + max(3, int(seconds)) + random.randint(2, max(2, jitter) + 2)
+    delay = max(3, int(seconds)) + random.randint(2, max(2, jitter) + 2)
+    storage[str(phone)] = time.time() + delay
 
 
 def get_selected_chat_ids(user):
@@ -195,6 +223,7 @@ def get_selected_chat_ids(user):
 def flood_seconds(e):
     for attr in ("value", "x"):
         value = getattr(e, attr, None)
+
         if value:
             try:
                 return int(value)
@@ -204,9 +233,38 @@ def flood_seconds(e):
     return 60
 
 
-# -------------------------
-# Buttons
-# -------------------------
+def _remember_clicked(storage, key, limit=5000):
+    storage.add(key)
+
+    if len(storage) > limit:
+        storage.clear()
+
+
+def is_meow_response(phone, message, normalized):
+    # Fishing messages should never be treated as Meow
+    if "ماهی" in normalized or "ماهیا" in normalized:
+        return False
+
+    tracked_meow_id = MEOW_TRACKED_MESSAGES.get(phone, {}).get(message.chat.id)
+
+    # Best case: bot replied directly to our sent "میو"
+    if (
+        getattr(message, "reply_to_message_id", None)
+        and tracked_meow_id
+        and message.reply_to_message_id == tracked_meow_id
+    ):
+        return True
+
+    # Do not treat Pishi messages as Meow unless it replied to our Meow
+    if "پیشی" in normalized:
+        return False
+
+    return "میو" in normalized or "میوت" in normalized
+
+
+# ============================================================
+# Button helpers
+# ============================================================
 
 async def click_inline_button(message, button, row_index, col_index):
     """
@@ -214,8 +272,8 @@ async def click_inline_button(message, button, row_index, col_index):
 
     Priority:
       1. Click by callback_data
-      2. Click by corrected coordinates
-      3. Fallback coordinates for forks
+      2. Click by corrected coordinates: x=column, y=row
+      3. Fallback coordinates for forks expecting row,column
     """
     callback_data = getattr(button, "callback_data", None)
 
@@ -229,8 +287,8 @@ async def click_inline_button(message, button, row_index, col_index):
         except Exception as e:
             print(f"❌ callback click error: {e}")
 
-    # Pyrogram/Kurigram normally expects x=column, y=row
     try:
+        # Pyrogram/Kurigram normally expects x=column, y=row
         await message.click(col_index, row_index)
         return True
     except Exception as e:
@@ -251,7 +309,6 @@ async def click_inline_button(message, button, row_index, col_index):
 async def click_second_button(message):
     """
     Flattens inline keyboard and clicks the 2nd button overall.
-    Each button is clicked only by the caller using message-ID tracking.
     """
     try:
         reply_markup = getattr(message, "reply_markup", None)
@@ -288,7 +345,6 @@ async def click_second_button(message):
 async def click_claim_buttons(message):
     """
     Clicks Pishi claim/target buttons.
-    Each message should be tracked by caller so it is clicked only once.
     """
     try:
         reply_markup = getattr(message, "reply_markup", None)
@@ -326,6 +382,50 @@ async def click_claim_buttons(message):
         print(f"❌ click_claim_buttons error: {e}")
         return False
 
+
+async def click_meow_claim_buttons(message):
+    """
+    Clicks Meow claim buttons only.
+    """
+    try:
+        reply_markup = getattr(message, "reply_markup", None)
+        if not reply_markup:
+            return False
+
+        rows = getattr(reply_markup, "inline_keyboard", None)
+        if not rows:
+            return False
+
+        target_texts = [
+            "برداشت میو پوینت ها",
+            "برداشت میو",
+            "دریافت میو",
+            "برداشت",
+            "دریافت",
+        ]
+
+        for row_index, row in enumerate(rows):
+            for col_index, button in enumerate(row):
+                button_text = getattr(button, "text", "") or ""
+
+                if any(text in button_text for text in target_texts):
+                    return await click_inline_button(
+                        message,
+                        button,
+                        row_index,
+                        col_index
+                    )
+
+        return False
+
+    except Exception as e:
+        print(f"❌ click_meow_claim_buttons error: {e}")
+        return False
+
+
+# ============================================================
+# Delayed click tasks
+# ============================================================
 
 async def delayed_click_fishing(client, message, msg_key: str):
     current_task = asyncio.current_task()
@@ -385,31 +485,38 @@ async def delayed_click_pishi(client, message, msg_key: str):
             PISHI_CLICK_TASKS.pop(msg_key, None)
 
 
-async def rescue_loop(client, message):
-    end_time = time.time() + 40
+async def delayed_click_meow(client, message, msg_key: str):
+    current_task = asyncio.current_task()
 
-    while time.time() < end_time:
+    try:
+        await asyncio.sleep(MEOW_CLICK_DELAY)
+
+        if msg_key in MEOW_CLICKED_MESSAGES:
+            return
+
         try:
             fresh_message = await client.get_messages(message.chat.id, message.id)
+        except:
+            fresh_message = message
 
-            if not fresh_message:
-                break
+        if await click_meow_claim_buttons(fresh_message):
+            _remember_clicked(MEOW_CLICKED_MESSAGES, msg_key)
+            print(f"🍬 [{msg_key}] Meow claim button clicked once")
 
-            clicked = await click_claim_buttons(fresh_message)
+    except asyncio.CancelledError:
+        return
 
-            if not clicked:
-                break
+    except Exception as e:
+        print(f"❌ delayed_click_meow error: {e}")
 
-        except Exception as e:
-            print(f"❌ rescue_loop error: {e}")
-            break
-
-        await asyncio.sleep(2)
+    finally:
+        if MEOW_CLICK_TASKS.get(msg_key) is current_task:
+            MEOW_CLICK_TASKS.pop(msg_key, None)
 
 
-# -------------------------
+# ============================================================
 # Bot message handler
-# -------------------------
+# ============================================================
 
 async def handle_bot_message(client, phone: str, message):
     try:
@@ -426,17 +533,18 @@ async def handle_bot_message(client, phone: str, message):
         raw_text = message.text or message.caption or ""
         normalized = normalize_text(raw_text).lower()
 
-        # -------------------------
+        # ============================================================
         # Dynamic cooldown parsing
-        # -------------------------
+        # ============================================================
         cooldown = parse_cooldown_seconds(raw_text)
+        meow_response = user.get("meow_enabled") and is_meow_response(phone, message, normalized)
 
         if cooldown is not None:
             if user.get("fishing_enabled") and ("ماهی" in normalized or "ماهیا" in normalized):
                 set_next_run(FISHING_NEXT_RUN, phone, cooldown)
                 print(f"⏱ [{phone}] Fishing cooldown parsed: {cooldown}s")
 
-            elif user.get("meow_enabled") and ("میو" in normalized or "میوت" in normalized) and "پیشی" not in normalized:
+            elif meow_response:
                 set_next_run(MEOW_NEXT_RUN, phone, cooldown)
                 print(f"⏱ [{phone}] Meow cooldown parsed: {cooldown}s")
 
@@ -444,13 +552,13 @@ async def handle_bot_message(client, phone: str, message):
                 set_next_run(PISHI_NEXT_RUN, phone, cooldown)
                 print(f"⏱ [{phone}] Pishi cooldown parsed: {cooldown}s")
 
-        # -------------------------
+        # ============================================================
         # Fishing reply / edited reply
-        # -------------------------
+        # ============================================================
         if user.get("fishing_enabled") and getattr(message, "reply_to_message_id", None):
-            tracked_message_id = TRACKED_FISHING_MESSAGES.get(phone, {}).get(message.chat.id)
+            tracked_fishing_id = TRACKED_FISHING_MESSAGES.get(phone, {}).get(message.chat.id)
 
-            if tracked_message_id and message.reply_to_message_id == tracked_message_id:
+            if tracked_fishing_id and message.reply_to_message_id == tracked_fishing_id:
                 reply_markup = getattr(message, "reply_markup", None)
                 inline_keyboard = getattr(reply_markup, "inline_keyboard", None) if reply_markup else None
 
@@ -467,36 +575,64 @@ async def handle_bot_message(client, phone: str, message):
                             delayed_click_fishing(client, message, msg_key)
                         )
 
-        # -------------------------
-        # Pishi rescue / claim buttons
+        # ============================================================
+        # Meow claim button
+        # If Pishi is enabled, Pishi handles generic claim clicks.
+        # If Pishi is disabled, Meow handles its own claim clicks.
+        # ============================================================
+        if meow_response and not user.get("pishi_enabled"):
+            reply_markup = getattr(message, "reply_markup", None)
+            inline_keyboard = getattr(reply_markup, "inline_keyboard", None) if reply_markup else None
+
+            if inline_keyboard:
+                meow_msg_key = f"{phone}:{message.chat.id}:{message.id}"
+
+                if meow_msg_key not in MEOW_CLICKED_MESSAGES:
+                    existing_task = MEOW_CLICK_TASKS.get(meow_msg_key)
+
+                    if existing_task and not existing_task.done():
+                        existing_task.cancel()
+
+                    MEOW_CLICK_TASKS[meow_msg_key] = asyncio.create_task(
+                        delayed_click_meow(client, message, meow_msg_key)
+                    )
+
+        # ============================================================
+        # Pishi claim buttons
         # Click each unique message only once
-        # -------------------------
+        # ============================================================
         if user.get("pishi_enabled"):
-            pishi_msg_key = f"{phone}:{message.chat.id}:{message.id}"
+            is_fishing_message = "ماهی" in normalized or "ماهیا" in normalized
 
             pishi_target = (
-                "نجات پیشی خیابونی" in raw_text
-                or "پیشی" in normalized
-                or "میو" in normalized
+                not is_fishing_message
+                and (
+                    "نجات پیشی خیابونی" in raw_text
+                    or "پیشی" in normalized
+                    or "میو" in normalized
+                )
             )
 
-            if pishi_target and pishi_msg_key not in PISHI_CLICKED_MESSAGES:
-                existing_task = PISHI_CLICK_TASKS.get(pishi_msg_key)
+            if pishi_target:
+                pishi_msg_key = f"{phone}:{message.chat.id}:{message.id}"
 
-                if existing_task and not existing_task.done():
-                    existing_task.cancel()
+                if pishi_msg_key not in PISHI_CLICKED_MESSAGES:
+                    existing_task = PISHI_CLICK_TASKS.get(pishi_msg_key)
 
-                PISHI_CLICK_TASKS[pishi_msg_key] = asyncio.create_task(
-                    delayed_click_pishi(client, message, pishi_msg_key)
-                )
+                    if existing_task and not existing_task.done():
+                        existing_task.cancel()
+
+                    PISHI_CLICK_TASKS[pishi_msg_key] = asyncio.create_task(
+                        delayed_click_pishi(client, message, pishi_msg_key)
+                    )
 
     except Exception as e:
         print(f"❌ handle_bot_message error: {e}")
 
 
-# -------------------------
+# ============================================================
 # Scheduler
-# -------------------------
+# ============================================================
 
 async def smart_scheduler_loop(client, phone: str):
     while True:
@@ -520,18 +656,27 @@ async def smart_scheduler_loop(client, phone: str):
 
             now = time.time()
 
-            # -------------------------
+            # ============================================================
             # Meow
-            # -------------------------
+            # ============================================================
             if user.get("meow_enabled") and now >= MEOW_NEXT_RUN.get(phone, 0):
                 fallback = int(os.getenv("MEOW_FALLBACK_SECONDS", "300"))
 
+                # Temporary fallback until the bot response is parsed
                 MEOW_NEXT_RUN[phone] = now + fallback + random.randint(2, 8)
+
+                print(f"😺 [{phone}] Meow due. Fallback next run in {fallback}s")
 
                 for chat_id in chat_ids:
                     try:
-                        await client.send_message(chat_id, "میو")
-                        print(f"😺 [{phone}] Meow sent to {chat_id}")
+                        sent_message = await client.send_message(chat_id, "میو")
+
+                        if phone not in MEOW_TRACKED_MESSAGES:
+                            MEOW_TRACKED_MESSAGES[phone] = {}
+
+                        MEOW_TRACKED_MESSAGES[phone][chat_id] = sent_message.id
+
+                        print(f"😺 [{phone}] Meow sent to {chat_id}, tracking message {sent_message.id}")
 
                     except FloodWait as e:
                         wait_seconds = flood_seconds(e)
@@ -545,9 +690,9 @@ async def smart_scheduler_loop(client, phone: str):
 
                     await asyncio.sleep(random.uniform(1.0, 3.0))
 
-            # -------------------------
+            # ============================================================
             # Pishi
-            # -------------------------
+            # ============================================================
             if user.get("pishi_enabled") and now >= PISHI_NEXT_RUN.get(phone, 0):
                 interval = int(os.getenv("PISHI_INTERVAL_SECONDS", "600"))
 
@@ -570,9 +715,9 @@ async def smart_scheduler_loop(client, phone: str):
 
                     await asyncio.sleep(random.uniform(1.0, 3.0))
 
-            # -------------------------
+            # ============================================================
             # Fishing
-            # -------------------------
+            # ============================================================
             if user.get("fishing_enabled") and now >= FISHING_NEXT_RUN.get(phone, 0):
                 interval = int(os.getenv("FISHING_INTERVAL_SECONDS", "600"))
 
@@ -607,9 +752,19 @@ async def smart_scheduler_loop(client, phone: str):
         await asyncio.sleep(15)
 
 
-# -------------------------
+# ============================================================
 # Worker management
-# -------------------------
+# ============================================================
+
+def _cancel_phone_click_tasks(phone: str):
+    for task_dict in (FISHING_CLICK_TASKS, PISHI_CLICK_TASKS, MEOW_CLICK_TASKS):
+        for key, task in list(task_dict.items()):
+            if key.startswith(phone + ":"):
+                try:
+                    task.cancel()
+                except:
+                    pass
+
 
 async def _start_worker(phone: str):
     phone = str(phone)
@@ -633,6 +788,9 @@ async def _start_worker(phone: str):
         return
 
     STARTING.add(phone)
+
+    # Cancel old click tasks if any exist
+    _cancel_phone_click_tasks(phone)
 
     try:
         safe_name = "sb_" + re.sub(r"\W+", "_", phone)
@@ -710,6 +868,8 @@ async def _stop_worker(phone: str):
         await worker["client"].stop()
     except:
         pass
+
+    _cancel_phone_click_tasks(phone)
 
     print(f"⏹ Worker stopped for {phone}")
 
