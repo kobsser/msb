@@ -10,6 +10,7 @@ from cryptography.fernet import Fernet, InvalidToken
 
 from config import ENCRYPTION_KEY
 
+
 _local = threading.local()
 
 try:
@@ -18,8 +19,28 @@ except Exception:
     raise RuntimeError("ENCRYPTION_KEY is not a valid Fernet key.")
 
 
+DEFAULT_SETTINGS = {
+    "STARTUP_DELAY": "10",
+    "ACCOUNT_START_INTERVAL": "3",
+    "STOP_COOLDOWN_SECONDS": "5",
+
+    "MEOW_FALLBACK_SECONDS": "300",
+    "PISHI_INTERVAL_SECONDS": "1800",
+    "FISHING_INTERVAL_SECONDS": "600",
+
+    "FISHING_CLICK_DELAY": "2.0",
+    "PISHI_CLICK_DELAY": "1.0",
+    "MEOW_CLICK_DELAY": "1.0",
+
+    # ms = 4:30 means 4 minutes 30 seconds
+    # hm = 4:30 means 4 hours 30 minutes
+    "TWO_PART_TIME_MODE": "ms",
+}
+
+
 def _db_url():
     url = os.getenv("DATABASE_URL", "").strip()
+
     if not url:
         raise RuntimeError("DATABASE_URL environment variable is missing.")
 
@@ -46,6 +67,7 @@ def get_conn():
 def encrypt_session(session_string: str) -> str:
     if not session_string:
         return ""
+
     return cipher.encrypt(session_string.encode()).decode()
 
 
@@ -56,7 +78,6 @@ def decrypt_session(encrypted_string: str) -> str:
     try:
         return cipher.decrypt(encrypted_string.encode()).decode()
     except InvalidToken:
-        # Fallback for old plaintext session strings
         return encrypted_string
 
 
@@ -95,11 +116,21 @@ def init_db():
             fishing_enabled INTEGER DEFAULT 0,
             is_active INTEGER DEFAULT 0,
             cached_groups TEXT DEFAULT '[]',
+            meow_next_run REAL DEFAULT 0,
+            pishi_next_run REAL DEFAULT 0,
+            fishing_next_run REAL DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
 
-    # Compatibility / migration helper
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    """)
+
+    # Compatibility migrations
     cur.execute("""
         DO $$
         BEGIN
@@ -116,8 +147,40 @@ def init_db():
             ) THEN
                 ALTER TABLE tg_accounts ADD COLUMN fishing_enabled INTEGER DEFAULT 0;
             END IF;
+
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name='tg_accounts' AND column_name='meow_next_run'
+            ) THEN
+                ALTER TABLE tg_accounts ADD COLUMN meow_next_run REAL DEFAULT 0;
+            END IF;
+
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name='tg_accounts' AND column_name='pishi_next_run'
+            ) THEN
+                ALTER TABLE tg_accounts ADD COLUMN pishi_next_run REAL DEFAULT 0;
+            END IF;
+
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name='tg_accounts' AND column_name='fishing_next_run'
+            ) THEN
+                ALTER TABLE tg_accounts ADD COLUMN fishing_next_run REAL DEFAULT 0;
+            END IF;
         END $$;
     """)
+
+    # Insert default settings
+    for key, value in DEFAULT_SETTINGS.items():
+        cur.execute(
+            """
+            INSERT INTO settings (key, value)
+            VALUES (%s, %s)
+            ON CONFLICT (key) DO NOTHING
+            """,
+            (key, value)
+        )
 
     conn.commit()
 
@@ -128,6 +191,78 @@ def init_db():
         if not get_web_user(admin_user):
             create_web_user(admin_user, admin_pass, is_admin=True)
             print(f"✅ Created admin user: {admin_user}")
+
+
+# -------------------------
+# Settings
+# -------------------------
+
+def get_setting(key, default=None):
+    conn = get_conn()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+    cur.execute("SELECT value FROM settings WHERE key = %s", (key,))
+    row = cur.fetchone()
+
+    cur.close()
+
+    if row:
+        return row["value"]
+
+    return DEFAULT_SETTINGS.get(key, default)
+
+
+def get_all_settings():
+    conn = get_conn()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+    cur.execute("SELECT key, value FROM settings")
+    rows = cur.fetchall()
+
+    cur.close()
+
+    data = DEFAULT_SETTINGS.copy()
+
+    for row in rows:
+        data[row["key"]] = row["value"]
+
+    return data
+
+
+def set_setting(key, value):
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        INSERT INTO settings (key, value)
+        VALUES (%s, %s)
+        ON CONFLICT (key) DO UPDATE SET
+            value = EXCLUDED.value
+        """,
+        (key, str(value))
+    )
+
+    conn.commit()
+    cur.close()
+
+
+def get_setting_int(key, default=0):
+    value = get_setting(key, str(default))
+
+    try:
+        return int(float(value))
+    except:
+        return default
+
+
+def get_setting_float(key, default=0.0):
+    value = get_setting(key, str(default))
+
+    try:
+        return float(value)
+    except:
+        return default
 
 
 # -------------------------
@@ -260,6 +395,10 @@ def _row_to_account(row):
     acc["fishing_enabled"] = bool(acc.get("fishing_enabled"))
     acc["is_active"] = bool(acc.get("is_active"))
 
+    acc["meow_next_run"] = float(acc.get("meow_next_run") or 0.0)
+    acc["pishi_next_run"] = float(acc.get("pishi_next_run") or 0.0)
+    acc["fishing_next_run"] = float(acc.get("fishing_next_run") or 0.0)
+
     # Compatibility alias
     acc["fish_enabled"] = acc["pishi_enabled"]
 
@@ -275,8 +414,32 @@ def save_tg_account(
     pishi_enabled=False,
     fishing_enabled=False,
     is_active=False,
-    cached_groups=None
+    cached_groups=None,
+    meow_next_run=None,
+    pishi_next_run=None,
+    fishing_next_run=None
 ):
+    existing = get_tg_account(phone)
+
+    if existing:
+        if meow_next_run is None:
+            meow_next_run = existing.get("meow_next_run", 0.0)
+
+        if pishi_next_run is None:
+            pishi_next_run = existing.get("pishi_next_run", 0.0)
+
+        if fishing_next_run is None:
+            fishing_next_run = existing.get("fishing_next_run", 0.0)
+    else:
+        if meow_next_run is None:
+            meow_next_run = 0.0
+
+        if pishi_next_run is None:
+            pishi_next_run = 0.0
+
+        if fishing_next_run is None:
+            fishing_next_run = 0.0
+
     conn = get_conn()
     cur = conn.cursor()
 
@@ -293,9 +456,12 @@ def save_tg_account(
             pishi_enabled,
             fishing_enabled,
             is_active,
-            cached_groups
+            cached_groups,
+            meow_next_run,
+            pishi_next_run,
+            fishing_next_run
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (phone) DO UPDATE SET
             owner_id = EXCLUDED.owner_id,
             session_string = EXCLUDED.session_string,
@@ -304,7 +470,10 @@ def save_tg_account(
             pishi_enabled = EXCLUDED.pishi_enabled,
             fishing_enabled = EXCLUDED.fishing_enabled,
             is_active = EXCLUDED.is_active,
-            cached_groups = EXCLUDED.cached_groups
+            cached_groups = EXCLUDED.cached_groups,
+            meow_next_run = EXCLUDED.meow_next_run,
+            pishi_next_run = EXCLUDED.pishi_next_run,
+            fishing_next_run = EXCLUDED.fishing_next_run
         """,
         (
             str(phone),
@@ -315,7 +484,10 @@ def save_tg_account(
             _bool(pishi_enabled),
             _bool(fishing_enabled),
             _bool(is_active),
-            _json_dumps(cached_groups)
+            _json_dumps(cached_groups),
+            float(meow_next_run or 0.0),
+            float(pishi_next_run or 0.0),
+            float(fishing_next_run or 0.0)
         )
     )
 
@@ -371,6 +543,36 @@ def delete_tg_account(phone, owner_id):
     cur.execute(
         "DELETE FROM tg_accounts WHERE phone = %s AND owner_id = %s",
         (str(phone), owner_id)
+    )
+
+    conn.commit()
+    cur.close()
+
+
+def update_account_next_run(
+    phone,
+    meow_next_run=None,
+    pishi_next_run=None,
+    fishing_next_run=None
+):
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        UPDATE tg_accounts
+        SET
+            meow_next_run = COALESCE(%s, meow_next_run),
+            pishi_next_run = COALESCE(%s, pishi_next_run),
+            fishing_next_run = COALESCE(%s, fishing_next_run)
+        WHERE phone = %s
+        """,
+        (
+            meow_next_run,
+            pishi_next_run,
+            fishing_next_run,
+            str(phone)
+        )
     )
 
     conn.commit()

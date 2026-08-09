@@ -3,6 +3,8 @@ import re
 import uuid
 import asyncio
 import threading
+import signal
+import atexit
 
 from functools import wraps
 
@@ -30,22 +32,25 @@ from database import (
     save_tg_account,
     get_tg_account,
     get_tg_accounts_for_user,
-    delete_tg_account
+    delete_tg_account,
+    get_setting,
+    set_setting,
+    get_all_settings
 )
 
 from clients import (
     send_code,
     sign_in,
-    check_password,
-    get_groups
+    check_password
 )
 
 import workers
+import session_manager
 
 
-# -------------------------
+# ============================================================
 # Background asyncio loop
-# -------------------------
+# ============================================================
 
 LOOP = asyncio.new_event_loop()
 
@@ -56,6 +61,19 @@ def _run_loop():
 
 
 threading.Thread(target=_run_loop, daemon=True).start()
+
+try:
+    workers._GLOBAL_LOOP = LOOP
+except:
+    pass
+
+atexit.register(workers.shutdown_all_workers)
+
+try:
+    signal.signal(signal.SIGTERM, workers.shutdown_all_workers)
+    signal.signal(signal.SIGINT, workers.shutdown_all_workers)
+except:
+    pass
 
 
 def run_async(coro, timeout=None):
@@ -85,9 +103,9 @@ def is_session_string(result):
     )
 
 
-# -------------------------
+# ============================================================
 # Flask app
-# -------------------------
+# ============================================================
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -95,9 +113,9 @@ app.secret_key = SECRET_KEY
 init_db()
 
 
-# -------------------------
+# ============================================================
 # Auth decorators
-# -------------------------
+# ============================================================
 
 def login_required(f):
     @wraps(f)
@@ -122,9 +140,9 @@ def admin_required(f):
     return decorated
 
 
-# -------------------------
+# ============================================================
 # Helpers
-# -------------------------
+# ============================================================
 
 FA_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789")
 
@@ -141,9 +159,52 @@ def normalize_group_id(value: str):
     return None
 
 
-# -------------------------
+def finalize_new_account(phone, session_string):
+    """
+    Saves the new account, waits a little, then fetches groups
+    using the shared session manager.
+    """
+    save_tg_account(
+        phone=phone,
+        owner_id=session["user_id"],
+        session_string=session_string,
+        cached_groups=[]
+    )
+
+    session.pop("pending_phone", None)
+
+    # Small pause after login before opening another client
+    safe_run_async(asyncio.sleep(3), timeout=10)
+
+    groups = safe_run_async(
+        session_manager.get_groups_managed(phone),
+        timeout=120
+    )
+
+    if isinstance(groups, list):
+        account = get_tg_account(phone)
+
+        if account:
+            save_tg_account(
+                phone=phone,
+                owner_id=account["owner_id"],
+                session_string=account["session_string"],
+                selected_groups=account["selected_groups"],
+                meow_enabled=account["meow_enabled"],
+                pishi_enabled=account["pishi_enabled"],
+                fishing_enabled=account["fishing_enabled"],
+                is_active=account["is_active"],
+                cached_groups=groups
+            )
+
+        return True, groups
+
+    return False, groups
+
+
+# ============================================================
 # Basic routes
-# -------------------------
+# ============================================================
 
 @app.route("/")
 def index():
@@ -213,9 +274,9 @@ def logout():
     return redirect(url_for("login"))
 
 
-# -------------------------
+# ============================================================
 # Dashboard
-# -------------------------
+# ============================================================
 
 @app.route("/dashboard")
 @login_required
@@ -224,9 +285,9 @@ def dashboard():
     return render_template("dashboard.html", accounts=accounts)
 
 
-# -------------------------
+# ============================================================
 # Add Telegram account
-# -------------------------
+# ============================================================
 
 @app.route("/add_account", methods=["GET", "POST"])
 @login_required
@@ -236,6 +297,12 @@ def add_account():
 
         if not phone:
             flash("شماره را وارد کنید", "danger")
+            return redirect(url_for("add_account"))
+
+        existing = get_tg_account(phone)
+
+        if existing and existing["owner_id"] != session["user_id"]:
+            flash("این شماره قبلا ثبت شده است", "danger")
             return redirect(url_for("add_account"))
 
         result = safe_run_async(send_code(phone), timeout=60)
@@ -264,21 +331,13 @@ def verify_code():
         return render_template("verify_password.html", phone=phone)
 
     if is_session_string(result):
-        groups = safe_run_async(get_groups(result), timeout=120)
+        ok, groups = finalize_new_account(phone, result)
 
-        if not isinstance(groups, list):
-            groups = []
+        if ok:
+            flash("اکانت با موفقیت اضافه شد", "success")
+        else:
+            flash("اکانت اضافه شد، اما دریافت گروه‌ها ناموفق بود", "warning")
 
-        save_tg_account(
-            phone=phone,
-            owner_id=session["user_id"],
-            session_string=result,
-            cached_groups=groups
-        )
-
-        session.pop("pending_phone", None)
-
-        flash("اکانت با موفقیت اضافه شد", "success")
         return redirect(url_for("dashboard"))
 
     flash(str(result), "danger")
@@ -297,30 +356,22 @@ def verify_password():
     result = safe_run_async(check_password(phone, password), timeout=60)
 
     if is_session_string(result):
-        groups = safe_run_async(get_groups(result), timeout=120)
+        ok, groups = finalize_new_account(phone, result)
 
-        if not isinstance(groups, list):
-            groups = []
+        if ok:
+            flash("اکانت با موفقیت اضافه شد", "success")
+        else:
+            flash("اکانت اضافه شد، اما دریافت گروه‌ها ناموفق بود", "warning")
 
-        save_tg_account(
-            phone=phone,
-            owner_id=session["user_id"],
-            session_string=result,
-            cached_groups=groups
-        )
-
-        session.pop("pending_phone", None)
-
-        flash("اکانت با موفقیت اضافه شد", "success")
         return redirect(url_for("dashboard"))
 
     flash(str(result), "danger")
     return render_template("verify_password.html", phone=phone)
 
 
-# -------------------------
+# ============================================================
 # Account settings
-# -------------------------
+# ============================================================
 
 @app.route("/account/<phone>")
 @login_required
@@ -430,7 +481,10 @@ def refresh_groups(phone):
     if not account or account["owner_id"] != session["user_id"]:
         return redirect(url_for("dashboard"))
 
-    groups = safe_run_async(get_groups(account["session_string"]), timeout=120)
+    groups = safe_run_async(
+        session_manager.get_groups_managed(phone),
+        timeout=120
+    )
 
     if isinstance(groups, list):
         save_tg_account(
@@ -452,9 +506,9 @@ def refresh_groups(phone):
     return redirect(url_for("account_settings", phone=phone))
 
 
-# -------------------------
+# ============================================================
 # Admin invites
-# -------------------------
+# ============================================================
 
 @app.route("/admin/invites", methods=["GET", "POST"])
 @admin_required
@@ -469,9 +523,113 @@ def admin_invites():
     return render_template("admin_invites.html", invites=invites)
 
 
-# -------------------------
+# ============================================================
+# Admin settings
+# ============================================================
+
+EDITABLE_SETTINGS = [
+    {
+        "key": "STARTUP_DELAY",
+        "label": "Startup delay before starting workers (seconds)",
+        "type": "number"
+    },
+    {
+        "key": "ACCOUNT_START_INTERVAL",
+        "label": "Delay between starting each account (seconds)",
+        "type": "number"
+    },
+    {
+        "key": "STOP_COOLDOWN_SECONDS",
+        "label": "Cooldown after stopping a session (seconds)",
+        "type": "number"
+    },
+    {
+        "key": "MEOW_FALLBACK_SECONDS",
+        "label": "Meow fallback cooldown (seconds)",
+        "type": "number"
+    },
+    {
+        "key": "PISHI_INTERVAL_SECONDS",
+        "label": "Pishi interval (seconds) — default 1800 = 30 minutes",
+        "type": "number"
+    },
+    {
+        "key": "FISHING_INTERVAL_SECONDS",
+        "label": "Fishing fallback interval (seconds)",
+        "type": "number"
+    },
+    {
+        "key": "FISHING_CLICK_DELAY",
+        "label": "Fishing click delay (seconds)",
+        "type": "float"
+    },
+    {
+        "key": "PISHI_CLICK_DELAY",
+        "label": "Pishi click delay (seconds)",
+        "type": "float"
+    },
+    {
+        "key": "MEOW_CLICK_DELAY",
+        "label": "Meow click delay (seconds)",
+        "type": "float"
+    },
+    {
+        "key": "TWO_PART_TIME_MODE",
+        "label": "Two-part time mode (ms or hm)",
+        "type": "text"
+    },
+]
+
+
+@app.route("/admin/settings", methods=["GET", "POST"])
+@admin_required
+def admin_settings():
+    if request.method == "POST":
+        for item in EDITABLE_SETTINGS:
+            key = item["key"]
+            value = request.form.get(key, "").strip()
+
+            if value == "":
+                continue
+
+            if item["type"] == "number":
+                try:
+                    int(value)
+                except:
+                    flash(f"{key} must be an integer", "danger")
+                    continue
+
+            elif item["type"] == "float":
+                try:
+                    float(value)
+                except:
+                    flash(f"{key} must be a number", "danger")
+                    continue
+
+            elif key == "TWO_PART_TIME_MODE":
+                value = value.lower()
+
+                if value not in ("ms", "hm"):
+                    flash("TWO_PART_TIME_MODE must be ms or hm", "danger")
+                    continue
+
+            set_setting(key, value)
+
+        flash("Settings saved", "success")
+        return redirect(url_for("admin_settings"))
+
+    settings = get_all_settings()
+
+    return render_template(
+        "admin_settings.html",
+        settings=settings,
+        editable_settings=EDITABLE_SETTINGS
+    )
+
+
+# ============================================================
 # Startup
-# -------------------------
+# ============================================================
 
 try:
     workers.start_all_active(LOOP)

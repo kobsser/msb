@@ -4,12 +4,22 @@ import time
 import random
 import asyncio
 
-from pyrogram import Client, filters
+from pyrogram import filters
 from pyrogram.errors import FloodWait
 from pyrogram.handlers import MessageHandler, EditedMessageHandler
 
-from config import API_ID, API_HASH, BOT_USER_ID
-from database import get_tg_account, get_all_tg_accounts
+from config import BOT_USER_ID
+
+from database import (
+    get_tg_account,
+    get_all_tg_accounts,
+    update_account_next_run,
+    get_setting,
+    get_setting_int,
+    get_setting_float
+)
+
+import session_manager
 
 
 # ============================================================
@@ -18,12 +28,9 @@ from database import get_tg_account, get_all_tg_accounts
 
 WORKERS = {}
 STARTING = set()
+START_ATTEMPTS = {}
 
 _GLOBAL_LOOP = None
-
-MEOW_NEXT_RUN = {}
-PISHI_NEXT_RUN = {}
-FISHING_NEXT_RUN = {}
 
 MEOW_TRACKED_MESSAGES = {}
 TRACKED_FISHING_MESSAGES = {}
@@ -42,30 +49,9 @@ COOLDOWN_RE = re.compile(
     r"(?:بعد از|باید|تا)\s*(?P<time>\d{1,3}(?:[:：.]\d{1,2}(?:[:：.]\d{1,2})?)?)"
 )
 
-try:
-    FISHING_CLICK_DELAY = float(os.getenv("FISHING_CLICK_DELAY", "2.0"))
-except:
-    FISHING_CLICK_DELAY = 2.0
-
-try:
-    PISHI_CLICK_DELAY = float(os.getenv("PISHI_CLICK_DELAY", "1.0"))
-except:
-    PISHI_CLICK_DELAY = 1.0
-
-try:
-    MEOW_CLICK_DELAY = float(os.getenv("MEOW_CLICK_DELAY", "1.0"))
-except:
-    MEOW_CLICK_DELAY = 1.0
-
-# "ms" = two-part time means minutes:seconds
-# "hm" = two-part time means hours:minutes
-TWO_PART_TIME_MODE = os.getenv("TWO_PART_TIME_MODE", "ms").lower()
-if TWO_PART_TIME_MODE not in ("ms", "hm"):
-    TWO_PART_TIME_MODE = "ms"
-
 
 # ============================================================
-# Event loop helpers
+# Loop helpers
 # ============================================================
 
 def _get_loop(loop=None):
@@ -95,6 +81,7 @@ def _schedule_coroutine(coro, loop=None):
 
     try:
         running_loop = asyncio.get_running_loop()
+
         if running_loop == target_loop:
             target_loop.create_task(coro)
             return
@@ -102,6 +89,32 @@ def _schedule_coroutine(coro, loop=None):
         pass
 
     asyncio.run_coroutine_threadsafe(coro, target_loop)
+
+
+# ============================================================
+# Safe settings helpers
+# ============================================================
+
+def setting_int(key, default):
+    try:
+        return get_setting_int(key, default)
+    except:
+        return default
+
+
+def setting_float(key, default):
+    try:
+        return get_setting_float(key, default)
+    except:
+        return default
+
+
+def setting_str(key, default):
+    try:
+        value = get_setting(key, default)
+        return value if value is not None else default
+    except:
+        return default
 
 
 # ============================================================
@@ -121,6 +134,15 @@ def normalize_text(text: str) -> str:
     return text
 
 
+def get_two_part_time_mode():
+    mode = str(setting_str("TWO_PART_TIME_MODE", "ms")).lower()
+
+    if mode not in ("ms", "hm"):
+        return "ms"
+
+    return mode
+
+
 def parse_cooldown_seconds(text: str):
     """
     Parses cooldown time from raw bot text.
@@ -132,10 +154,6 @@ def parse_cooldown_seconds(text: str):
       30 دقیقه
       2 ساعت
       45 ثانیه
-
-    TWO_PART_TIME_MODE:
-      ms -> 4:30 = 4 minutes 30 seconds
-      hm -> 4:30 = 4 hours 30 minutes
     """
     text = normalize_text(text)
 
@@ -161,7 +179,9 @@ def parse_cooldown_seconds(text: str):
             if len(parts) == 3:
                 hours, minutes, secs = parts
             elif len(parts) == 2:
-                if TWO_PART_TIME_MODE == "hm":
+                mode = get_two_part_time_mode()
+
+                if mode == "hm":
                     hours, minutes, secs = parts[0], parts[1], 0
                 else:
                     hours, minutes, secs = 0, parts[0], parts[1]
@@ -203,9 +223,28 @@ def parse_cooldown_seconds(text: str):
     return None
 
 
-def set_next_run(storage, phone: str, seconds: int, jitter: int = 10):
-    delay = max(3, int(seconds)) + random.randint(2, max(2, jitter) + 2)
-    storage[str(phone)] = time.time() + delay
+def schedule_feature(phone: str, feature: str, seconds: int, jitter: int = 10):
+    """
+    Persists next run timestamp in database.
+    """
+    try:
+        delay = max(3, int(seconds)) + random.randint(2, max(2, jitter) + 2)
+        timestamp = time.time() + delay
+
+        if feature == "meow":
+            update_account_next_run(phone, meow_next_run=timestamp)
+        elif feature == "pishi":
+            update_account_next_run(phone, pishi_next_run=timestamp)
+        elif feature == "fishing":
+            update_account_next_run(phone, fishing_next_run=timestamp)
+
+        print(f"⏱ [{phone}] {feature} scheduled in {delay}s")
+
+        return timestamp
+
+    except Exception as e:
+        print(f"❌ schedule_feature error [{phone}] [{feature}]: {e}")
+        return None
 
 
 def get_selected_chat_ids(user):
@@ -282,13 +321,11 @@ async def click_inline_button(message, button, row_index, col_index):
             await message.click(callback_data=callback_data)
             return True
         except TypeError:
-            # Older fork/version may not support callback_data keyword
             pass
         except Exception as e:
             print(f"❌ callback click error: {e}")
 
     try:
-        # Pyrogram/Kurigram normally expects x=column, y=row
         await message.click(col_index, row_index)
         return True
     except Exception as e:
@@ -296,7 +333,6 @@ async def click_inline_button(message, button, row_index, col_index):
 
         if "doesn't exist" in error_text:
             try:
-                # Fallback for forks expecting row,column
                 await message.click(row_index, col_index)
                 return True
             except Exception as e2:
@@ -431,7 +467,10 @@ async def delayed_click_fishing(client, message, msg_key: str):
     current_task = asyncio.current_task()
 
     try:
-        await asyncio.sleep(FISHING_CLICK_DELAY)
+        delay = setting_float("FISHING_CLICK_DELAY", 2.0)
+        delay = max(0.0, float(delay))
+
+        await asyncio.sleep(delay)
 
         if msg_key in CLICKED_FISHING_MESSAGES:
             return
@@ -460,7 +499,10 @@ async def delayed_click_pishi(client, message, msg_key: str):
     current_task = asyncio.current_task()
 
     try:
-        await asyncio.sleep(PISHI_CLICK_DELAY)
+        delay = setting_float("PISHI_CLICK_DELAY", 1.0)
+        delay = max(0.0, float(delay))
+
+        await asyncio.sleep(delay)
 
         if msg_key in PISHI_CLICKED_MESSAGES:
             return
@@ -489,7 +531,10 @@ async def delayed_click_meow(client, message, msg_key: str):
     current_task = asyncio.current_task()
 
     try:
-        await asyncio.sleep(MEOW_CLICK_DELAY)
+        delay = setting_float("MEOW_CLICK_DELAY", 1.0)
+        delay = max(0.0, float(delay))
+
+        await asyncio.sleep(delay)
 
         if msg_key in MEOW_CLICKED_MESSAGES:
             return
@@ -541,16 +586,13 @@ async def handle_bot_message(client, phone: str, message):
 
         if cooldown is not None:
             if user.get("fishing_enabled") and ("ماهی" in normalized or "ماهیا" in normalized):
-                set_next_run(FISHING_NEXT_RUN, phone, cooldown)
-                print(f"⏱ [{phone}] Fishing cooldown parsed: {cooldown}s")
+                schedule_feature(phone, "fishing", cooldown)
 
             elif meow_response:
-                set_next_run(MEOW_NEXT_RUN, phone, cooldown)
-                print(f"⏱ [{phone}] Meow cooldown parsed: {cooldown}s")
+                schedule_feature(phone, "meow", cooldown)
 
             elif user.get("pishi_enabled") and "پیشی" in normalized and "ماهی" not in normalized:
-                set_next_run(PISHI_NEXT_RUN, phone, cooldown)
-                print(f"⏱ [{phone}] Pishi cooldown parsed: {cooldown}s")
+                schedule_feature(phone, "pishi", cooldown)
 
         # ============================================================
         # Fishing reply / edited reply
@@ -634,6 +676,19 @@ async def handle_bot_message(client, phone: str, message):
 # Scheduler
 # ============================================================
 
+def _client_is_connected(client) -> bool:
+    try:
+        value = getattr(client, "is_connected", False)
+
+        if callable(value):
+            return bool(value())
+
+        return bool(value)
+
+    except:
+        return False
+
+
 async def smart_scheduler_loop(client, phone: str):
     while True:
         try:
@@ -642,28 +697,33 @@ async def smart_scheduler_loop(client, phone: str):
             if not worker or not worker.get("running"):
                 break
 
-            user = get_tg_account(phone)
+            account = get_tg_account(phone)
 
-            if not user or not user.get("is_active"):
+            if not account or not account.get("is_active"):
                 await asyncio.sleep(15)
                 continue
 
-            chat_ids = get_selected_chat_ids(user)
+            chat_ids = get_selected_chat_ids(account)
 
             if not chat_ids:
                 await asyncio.sleep(15)
                 continue
+
+            try:
+                if not _client_is_connected(client):
+                    await client.connect()
+            except:
+                pass
 
             now = time.time()
 
             # ============================================================
             # Meow
             # ============================================================
-            if user.get("meow_enabled") and now >= MEOW_NEXT_RUN.get(phone, 0):
-                fallback = int(os.getenv("MEOW_FALLBACK_SECONDS", "300"))
+            if account.get("meow_enabled") and now >= float(account.get("meow_next_run") or 0.0):
+                fallback = setting_int("MEOW_FALLBACK_SECONDS", 300)
 
-                # Temporary fallback until the bot response is parsed
-                MEOW_NEXT_RUN[phone] = now + fallback + random.randint(2, 8)
+                schedule_feature(phone, "meow", fallback, jitter=8)
 
                 print(f"😺 [{phone}] Meow due. Fallback next run in {fallback}s")
 
@@ -680,23 +740,23 @@ async def smart_scheduler_loop(client, phone: str):
 
                     except FloodWait as e:
                         wait_seconds = flood_seconds(e)
-                        MEOW_NEXT_RUN[phone] = time.time() + wait_seconds + random.randint(5, 20)
+                        schedule_feature(phone, "meow", wait_seconds, jitter=20)
                         print(f"⏳ FloodWait Meow [{phone}]: {wait_seconds}s")
                         break
 
                     except Exception as e:
                         print(f"❌ Meow error [{phone}]: {e}")
-                        MEOW_NEXT_RUN[phone] = time.time() + 60
+                        schedule_feature(phone, "meow", 60, jitter=10)
 
                     await asyncio.sleep(random.uniform(1.0, 3.0))
 
             # ============================================================
             # Pishi
             # ============================================================
-            if user.get("pishi_enabled") and now >= PISHI_NEXT_RUN.get(phone, 0):
-                interval = int(os.getenv("PISHI_INTERVAL_SECONDS", "600"))
+            if account.get("pishi_enabled") and now >= float(account.get("pishi_next_run") or 0.0):
+                interval = setting_int("PISHI_INTERVAL_SECONDS", 1800)
 
-                PISHI_NEXT_RUN[phone] = now + interval + random.randint(2, 20)
+                schedule_feature(phone, "pishi", interval, jitter=20)
 
                 for chat_id in chat_ids:
                     try:
@@ -705,23 +765,23 @@ async def smart_scheduler_loop(client, phone: str):
 
                     except FloodWait as e:
                         wait_seconds = flood_seconds(e)
-                        PISHI_NEXT_RUN[phone] = time.time() + wait_seconds + random.randint(5, 20)
+                        schedule_feature(phone, "pishi", wait_seconds, jitter=20)
                         print(f"⏳ FloodWait Pishi [{phone}]: {wait_seconds}s")
                         break
 
                     except Exception as e:
                         print(f"❌ Pishi error [{phone}]: {e}")
-                        PISHI_NEXT_RUN[phone] = time.time() + 60
+                        schedule_feature(phone, "pishi", 60, jitter=10)
 
                     await asyncio.sleep(random.uniform(1.0, 3.0))
 
             # ============================================================
             # Fishing
             # ============================================================
-            if user.get("fishing_enabled") and now >= FISHING_NEXT_RUN.get(phone, 0):
-                interval = int(os.getenv("FISHING_INTERVAL_SECONDS", "600"))
+            if account.get("fishing_enabled") and now >= float(account.get("fishing_next_run") or 0.0):
+                interval = setting_int("FISHING_INTERVAL_SECONDS", 600)
 
-                FISHING_NEXT_RUN[phone] = now + interval + random.randint(2, 20)
+                schedule_feature(phone, "fishing", interval, jitter=20)
 
                 for chat_id in chat_ids:
                     try:
@@ -736,13 +796,13 @@ async def smart_scheduler_loop(client, phone: str):
 
                     except FloodWait as e:
                         wait_seconds = flood_seconds(e)
-                        FISHING_NEXT_RUN[phone] = time.time() + wait_seconds + random.randint(5, 20)
+                        schedule_feature(phone, "fishing", wait_seconds, jitter=20)
                         print(f"⏳ FloodWait Fishing [{phone}]: {wait_seconds}s")
                         break
 
                     except Exception as e:
                         print(f"❌ Fishing error [{phone}]: {e}")
-                        FISHING_NEXT_RUN[phone] = time.time() + 60
+                        schedule_feature(phone, "fishing", 60, jitter=10)
 
                     await asyncio.sleep(random.uniform(1.0, 3.0))
 
@@ -777,50 +837,44 @@ async def _start_worker(phone: str):
     if worker and worker.get("running"):
         return
 
-    user = get_tg_account(phone)
+    account = get_tg_account(phone)
 
-    if not user:
-        print(f"❌ Worker start failed: user not found {phone}")
+    if not account:
+        print(f"❌ Worker start failed: account not found {phone}")
         return
 
-    if not user.get("session_string"):
+    if not account.get("session_string"):
         print(f"❌ Worker start failed: no session {phone}")
         return
 
-    STARTING.add(phone)
+    if not account.get("is_active"):
+        print(f"⚠️ Worker not started because account is inactive: {phone}")
+        return
 
-    # Cancel old click tasks if any exist
-    _cancel_phone_click_tasks(phone)
+    STARTING.add(phone)
+    acquired = False
 
     try:
-        safe_name = "sb_" + re.sub(r"\W+", "_", phone)
+        async def setup(client):
+            async def handler(_, message):
+                await handle_bot_message(client, phone, message)
 
-        client = Client(
-            name=safe_name,
-            session_string=user["session_string"],
-            api_id=API_ID,
-            api_hash=API_HASH,
-            in_memory=True
-        )
-
-        async def handler(_, message):
-            await handle_bot_message(client, phone, message)
-
-        client.add_handler(
-            MessageHandler(
-                handler,
-                filters.user(BOT_USER_ID)
+            client.add_handler(
+                MessageHandler(
+                    handler,
+                    filters.user(BOT_USER_ID)
+                )
             )
-        )
 
-        client.add_handler(
-            EditedMessageHandler(
-                handler,
-                filters.user(BOT_USER_ID)
+            client.add_handler(
+                EditedMessageHandler(
+                    handler,
+                    filters.user(BOT_USER_ID)
+                )
             )
-        )
 
-        await client.start()
+        client = await session_manager.get_client(phone, setup=setup)
+        acquired = True
 
         scheduler_task = asyncio.create_task(
             smart_scheduler_loop(client, phone)
@@ -832,10 +886,33 @@ async def _start_worker(phone: str):
             "running": True
         }
 
+        START_ATTEMPTS.pop(phone, None)
+
         print(f"✅ Worker started for {phone}")
 
     except Exception as e:
-        print(f"❌ Worker start error [{phone}]: {e}")
+        error_text = str(e)
+
+        print(f"❌ Worker start error [{phone}]: {error_text}")
+
+        if acquired:
+            try:
+                await session_manager.release_client(phone)
+            except:
+                pass
+
+        if "AUTH_KEY_DUPLICATED" in error_text.upper() and START_ATTEMPTS.get(phone, 0) < 2:
+            START_ATTEMPTS[phone] = START_ATTEMPTS.get(phone, 0) + 1
+
+            retry_delay = 30 + (START_ATTEMPTS[phone] * 10)
+
+            print(f"⚠️ AUTH_KEY_DUPLICATED for {phone}. Retrying in {retry_delay}s...")
+
+            async def retry_later():
+                await asyncio.sleep(retry_delay)
+                await _start_worker(phone)
+
+            asyncio.create_task(retry_later())
 
     finally:
         STARTING.discard(phone)
@@ -865,9 +942,9 @@ async def _stop_worker(phone: str):
         pass
 
     try:
-        await worker["client"].stop()
-    except:
-        pass
+        await session_manager.release_client(phone)
+    except Exception as e:
+        print(f"❌ release_client error [{phone}]: {e}")
 
     _cancel_phone_click_tasks(phone)
 
@@ -882,14 +959,75 @@ def stop_worker(phone: str, loop=None):
     _schedule_coroutine(_stop_worker(phone), loop)
 
 
-def start_all_active(loop=None):
-    global _GLOBAL_LOOP
+async def _start_all_active_delayed(delay=None):
+    if delay is None:
+        delay = setting_int("STARTUP_DELAY", 10)
 
-    if loop is not None:
-        _GLOBAL_LOOP = loop
+    delay = max(0, int(delay))
+
+    if delay > 0:
+        print(f"⏳ Waiting {delay} seconds before starting active workers...")
+        await asyncio.sleep(delay)
+
+    START_ATTEMPTS.clear()
 
     accounts = get_all_tg_accounts()
+    active_accounts = [account for account in accounts if account.get("is_active")]
 
-    for account in accounts:
-        if account.get("is_active"):
-            start_worker(account["phone"], loop)
+    print(f"🚀 Starting {len(active_accounts)} active worker(s)...")
+
+    interval = setting_int("ACCOUNT_START_INTERVAL", 3)
+    interval = max(0, int(interval))
+
+    for index, account in enumerate(active_accounts):
+        try:
+            await _start_worker(account["phone"])
+        except Exception as e:
+            print(f"❌ start_all_active error [{account.get('phone')}]: {e}")
+
+        if index < len(active_accounts) - 1:
+            await asyncio.sleep(interval)
+
+
+def start_all_active(loop=None, delay=None):
+    _schedule_coroutine(_start_all_active_delayed(delay), loop)
+
+
+async def _stop_all_workers():
+    for phone in list(WORKERS.keys()):
+        try:
+            await _stop_worker(phone)
+        except Exception as e:
+            print(f"❌ stop_all_workers error: {e}")
+
+
+async def _shutdown_sequence():
+    await _stop_all_workers()
+
+    try:
+        await session_manager.stop_all_clients()
+    except Exception as e:
+        print(f"❌ stop_all_clients error: {e}")
+
+
+def shutdown_all_workers(*args):
+    loop = _get_loop()
+
+    if not loop:
+        return
+
+    try:
+        running_loop = asyncio.get_running_loop()
+
+        if running_loop == loop:
+            loop.create_task(_shutdown_sequence())
+            return
+
+    except:
+        pass
+
+    try:
+        future = asyncio.run_coroutine_threadsafe(_shutdown_sequence(), loop)
+        future.result(timeout=20)
+    except Exception as e:
+        print(f"❌ shutdown_all_workers error: {e}")
