@@ -5,12 +5,16 @@ load_dotenv()
 
 API_ID = int(os.getenv("API_ID", 0))
 API_HASH = os.getenv("API_HASH", "")
-SECRET_KEY = os.getenv("SECRET_KEY", "default-secret-key")
+SECRET_KEY = os.getenv("SECRET_KEY")
 ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
 
 BOT_USER_ID = 8299996037
 
-DATA_DIR = "/app/data" if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_ENV") else "data"
-os.makedirs(DATA_DIR, exist_ok=True)
+if not API_ID or not API_HASH:
+    raise RuntimeError("API_ID and API_HASH environment variables are required.")
 
-DB_PATH = os.path.join(DATA_DIR, "users.db")
+if not SECRET_KEY:
+    raise RuntimeError("SECRET_KEY environment variable is required.")
+
+if not ENCRYPTION_KEY:
+    raise RuntimeError("ENCRYPTION_KEY environment variable is required.")

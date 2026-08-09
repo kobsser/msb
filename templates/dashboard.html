@@ -12,22 +12,40 @@
         <div class="card h-100">
             <div class="card-body">
                 <h5 class="card-title">📱 {{ acc.phone }}</h5>
+
                 <div class="mb-3">
                     <span class="badge bg-{{ 'success' if acc.is_active else 'secondary' }}">
                         {{ '🟢 فعال' if acc.is_active else '⚪ غیرفعال' }}
                     </span>
-                    <span class="badge bg-info">{{ 'میو: روشن' if acc.meow_enabled else 'میو: خاموش' }}</span>
-                    <span class="badge bg-warning text-dark">{{ 'پیشی: روشن' if acc.pishi_enabled else 'پیشی: خاموش' }}</span>
+
+                    <span class="badge bg-info">
+                        {{ 'میو: روشن' if acc.meow_enabled else 'میو: خاموش' }}
+                    </span>
+
+                    <span class="badge bg-warning text-dark">
+                        {{ 'پیشی: روشن' if acc.pishi_enabled else 'پیشی: خاموش' }}
+                    </span>
+
+                    <span class="badge bg-primary">
+                        {{ 'ماهی: روشن' if acc.fishing_enabled else 'ماهی: خاموش' }}
+                    </span>
                 </div>
-                <p class="text-muted small mb-3">گروه‌ها: {{ acc.selected_groups | length }} انتخاب شده</p>
-                
+
+                <p class="text-muted small mb-3">
+                    گروه‌ها: {{ acc.selected_groups | length }} انتخاب شده
+                </p>
+
                 <div class="d-flex gap-2">
-                    <a href="{{ url_for('account_settings', phone=acc.phone) }}" class="btn btn-sm btn-outline-primary flex-fill">تنظیمات</a>
+                    <a href="{{ url_for('account_settings', phone=acc.phone) }}" class="btn btn-sm btn-outline-primary flex-fill">
+                        تنظیمات
+                    </a>
+
                     <form action="{{ url_for('toggle_account', phone=acc.phone) }}" method="POST" class="flex-fill">
                         <button type="submit" class="btn btn-sm btn-outline-{{ 'danger' if acc.is_active else 'success' }} w-100">
                             {{ 'توقف' if acc.is_active else 'شروع' }}
                         </button>
                     </form>
+
                     <form action="{{ url_for('delete_account', phone=acc.phone) }}" method="POST" onsubmit="return confirm('آیا از حذف این اکانت مطمئن هستید؟');">
                         <button type="submit" class="btn btn-sm btn-outline-danger">حذف</button>
                     </form>
