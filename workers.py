@@ -25,6 +25,14 @@ TRACKED_FISHING_MESSAGES = {}
 CLICKED_FISHING_MESSAGES = set()
 FISHING_CLICK_TASKS = {}
 
+PISHI_CLICKED_MESSAGES = set()
+PISHI_CLICK_TASKS = {}
+
+try:
+    PISHI_CLICK_DELAY = float(os.getenv("PISHI_CLICK_DELAY", "1.0"))
+except:
+    PISHI_CLICK_DELAY = 1.0
+
 FA_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789")
 
 COOLDOWN_RE = re.compile(
@@ -80,6 +88,13 @@ def _schedule_coroutine(coro, loop=None):
 # -------------------------
 # Text / cooldown helpers
 # -------------------------
+
+def _remember_clicked(storage, key, limit=5000):
+    storage.add(key)
+
+    if len(storage) > limit:
+        storage.clear()
+
 
 def normalize_text(text: str) -> str:
     if not text:
@@ -193,15 +208,50 @@ def flood_seconds(e):
 # Buttons
 # -------------------------
 
+async def click_inline_button(message, button, row_index, col_index):
+    """
+    Clicks a button safely.
+
+    Priority:
+      1. Click by callback_data
+      2. Click by corrected coordinates
+      3. Fallback coordinates for forks
+    """
+    callback_data = getattr(button, "callback_data", None)
+
+    if callback_data:
+        try:
+            await message.click(callback_data=callback_data)
+            return True
+        except TypeError:
+            # Older fork/version may not support callback_data keyword
+            pass
+        except Exception as e:
+            print(f"❌ callback click error: {e}")
+
+    # Pyrogram/Kurigram normally expects x=column, y=row
+    try:
+        await message.click(col_index, row_index)
+        return True
+    except Exception as e:
+        error_text = str(e).lower()
+
+        if "doesn't exist" in error_text:
+            try:
+                # Fallback for forks expecting row,column
+                await message.click(row_index, col_index)
+                return True
+            except Exception as e2:
+                print(f"❌ reversed coordinate click error: {e2}")
+
+        print(f"❌ coordinate click error: {e}")
+        return False
+
+
 async def click_second_button(message):
     """
     Flattens inline keyboard and clicks the 2nd button overall.
-    Works whether layout is:
-      [button, button, button]
-      or
-      [button]
-      [button]
-      [button]
+    Each button is clicked only by the caller using message-ID tracking.
     """
     try:
         reply_markup = getattr(message, "reply_markup", None)
@@ -216,16 +266,19 @@ async def click_second_button(message):
 
         for row_index, row in enumerate(rows):
             for col_index, button in enumerate(row):
-                buttons.append((row_index, col_index))
+                buttons.append((row_index, col_index, button))
 
         if len(buttons) < 2:
             return False
 
-        target_row, target_col = buttons[1]
+        target_row, target_col, target_button = buttons[1]
 
-        await message.click(target_row, target_col)
-
-        return True
+        return await click_inline_button(
+            message,
+            target_button,
+            target_row,
+            target_col
+        )
 
     except Exception as e:
         print(f"❌ click_second_button error: {e}")
@@ -233,6 +286,10 @@ async def click_second_button(message):
 
 
 async def click_claim_buttons(message):
+    """
+    Clicks Pishi claim/target buttons.
+    Each message should be tracked by caller so it is clicked only once.
+    """
     try:
         reply_markup = getattr(message, "reply_markup", None)
         if not reply_markup:
@@ -256,8 +313,12 @@ async def click_claim_buttons(message):
                 button_text = getattr(button, "text", "") or ""
 
                 if any(text in button_text for text in target_texts):
-                    await message.click(row_index, col_index)
-                    return True
+                    return await click_inline_button(
+                        message,
+                        button,
+                        row_index,
+                        col_index
+                    )
 
         return False
 
@@ -272,17 +333,17 @@ async def delayed_click_fishing(client, message, msg_key: str):
     try:
         await asyncio.sleep(FISHING_CLICK_DELAY)
 
+        if msg_key in CLICKED_FISHING_MESSAGES:
+            return
+
         try:
             fresh_message = await client.get_messages(message.chat.id, message.id)
         except:
             fresh_message = message
 
         if await click_second_button(fresh_message):
-            CLICKED_FISHING_MESSAGES.add(msg_key)
+            _remember_clicked(CLICKED_FISHING_MESSAGES, msg_key)
             print(f"🎣 [{msg_key}] Clicked 2nd fishing button")
-
-            if len(CLICKED_FISHING_MESSAGES) > 5000:
-                CLICKED_FISHING_MESSAGES.clear()
 
     except asyncio.CancelledError:
         return
@@ -293,6 +354,35 @@ async def delayed_click_fishing(client, message, msg_key: str):
     finally:
         if FISHING_CLICK_TASKS.get(msg_key) is current_task:
             FISHING_CLICK_TASKS.pop(msg_key, None)
+
+
+async def delayed_click_pishi(client, message, msg_key: str):
+    current_task = asyncio.current_task()
+
+    try:
+        await asyncio.sleep(PISHI_CLICK_DELAY)
+
+        if msg_key in PISHI_CLICKED_MESSAGES:
+            return
+
+        try:
+            fresh_message = await client.get_messages(message.chat.id, message.id)
+        except:
+            fresh_message = message
+
+        if await click_claim_buttons(fresh_message):
+            _remember_clicked(PISHI_CLICKED_MESSAGES, msg_key)
+            print(f"🐱 [{msg_key}] Pishi button clicked once")
+
+    except asyncio.CancelledError:
+        return
+
+    except Exception as e:
+        print(f"❌ delayed_click_pishi error: {e}")
+
+    finally:
+        if PISHI_CLICK_TASKS.get(msg_key) is current_task:
+            PISHI_CLICK_TASKS.pop(msg_key, None)
 
 
 async def rescue_loop(client, message):
@@ -379,13 +469,26 @@ async def handle_bot_message(client, phone: str, message):
 
         # -------------------------
         # Pishi rescue / claim buttons
+        # Click each unique message only once
         # -------------------------
         if user.get("pishi_enabled"):
-            if "نجات پیشی خیابونی" in raw_text:
-                asyncio.create_task(rescue_loop(client, message))
+            pishi_msg_key = f"{phone}:{message.chat.id}:{message.id}"
 
-            if "پیشی" in normalized or "میو" in normalized:
-                await click_claim_buttons(message)
+            pishi_target = (
+                "نجات پیشی خیابونی" in raw_text
+                or "پیشی" in normalized
+                or "میو" in normalized
+            )
+
+            if pishi_target and pishi_msg_key not in PISHI_CLICKED_MESSAGES:
+                existing_task = PISHI_CLICK_TASKS.get(pishi_msg_key)
+
+                if existing_task and not existing_task.done():
+                    existing_task.cancel()
+
+                PISHI_CLICK_TASKS[pishi_msg_key] = asyncio.create_task(
+                    delayed_click_pishi(client, message, pishi_msg_key)
+                )
 
     except Exception as e:
         print(f"❌ handle_bot_message error: {e}")
