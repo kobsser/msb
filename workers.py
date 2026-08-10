@@ -25,6 +25,7 @@ from database import (
 )
 
 import session_manager
+import optimizations
 
 
 # ============================================================
@@ -429,83 +430,6 @@ async def click_inline_button(message, button, row_index, col_index):
     return False
 
 
-async def click_second_button(message):
-    """
-    Flattens inline keyboard and clicks the 2nd button overall.
-    """
-    try:
-        reply_markup = getattr(message, "reply_markup", None)
-        if not reply_markup:
-            return False
-
-        rows = getattr(reply_markup, "inline_keyboard", None)
-        if not rows:
-            return False
-
-        buttons = []
-
-        for row_index, row in enumerate(rows):
-            for col_index, button in enumerate(row):
-                buttons.append((row_index, col_index, button))
-
-        if len(buttons) < 2:
-            return False
-
-        target_row, target_col, target_button = buttons[1]
-
-        return await click_inline_button(
-            message,
-            target_button,
-            target_row,
-            target_col
-        )
-
-    except Exception as e:
-        print(f"❌ click_second_button error: {e}")
-        return False
-
-
-async def click_claim_buttons(message):
-    """
-    Clicks Pishi claim/target buttons.
-    """
-    try:
-        reply_markup = getattr(message, "reply_markup", None)
-        if not reply_markup:
-            return False
-
-        rows = getattr(reply_markup, "inline_keyboard", None)
-        if not rows:
-            return False
-
-        target_texts = [
-            "برداشت میو پوینت ها",
-            "برداشت",
-            "دریافت",
-            "نجات",
-            "شروع",
-            "ادامه",
-        ]
-
-        for row_index, row in enumerate(rows):
-            for col_index, button in enumerate(row):
-                button_text = getattr(button, "text", "") or ""
-
-                if any(text in button_text for text in target_texts):
-                    return await click_inline_button(
-                        message,
-                        button,
-                        row_index,
-                        col_index
-                    )
-
-        return False
-
-    except Exception as e:
-        print(f"❌ click_claim_buttons error: {e}")
-        return False
-
-
 async def click_meow_claim_buttons(message):
     """
     Clicks Meow claim buttons only.
@@ -567,12 +491,21 @@ async def delayed_click_fishing(client, phone, message, msg_key: str):
         except:
             fresh_message = message
 
-        if await click_second_button(fresh_message):
-            _remember_clicked(CLICKED_FISHING_MESSAGES, msg_key)
-            print(f"🎣 [{msg_key}] Clicked 2nd fishing button")
+        # STRICT REQUIREMENT: callback_data MUST contain "feed_cat"
+        fishing_btn = optimizations.find_fishing_button(fresh_message)
+        if fishing_btn:
+            success = await click_inline_button(
+                fresh_message,
+                fishing_btn,
+                getattr(fishing_btn, "_row_index", 0),
+                getattr(fishing_btn, "_col_index", 0)
+            )
+            if success:
+                _remember_clicked(CLICKED_FISHING_MESSAGES, msg_key)
+                print(f"🎣 [{msg_key}] Clicked fishing button (feed_cat)")
 
-            # Always schedule a Fishing status check after successful click
-            schedule_fishing_status_check(phone)
+                # Always schedule a Fishing status check after successful click
+                schedule_fishing_status_check(phone)
 
     except asyncio.CancelledError:
         return
@@ -602,9 +535,18 @@ async def delayed_click_pishi(client, message, msg_key: str):
         except:
             fresh_message = message
 
-        if await click_claim_buttons(fresh_message):
-            _remember_clicked(PISHI_CLICKED_MESSAGES, msg_key)
-            print(f"🐱 [{msg_key}] Pishi button clicked once")
+        # STRICT REQUIREMENT: callback_data MUST contain "collect_cat"
+        pishi_btn = optimizations.find_pishi_button(fresh_message)
+        if pishi_btn:
+            success = await click_inline_button(
+                fresh_message,
+                pishi_btn,
+                getattr(pishi_btn, "_row_index", 0),
+                getattr(pishi_btn, "_col_index", 0)
+            )
+            if success:
+                _remember_clicked(PISHI_CLICKED_MESSAGES, msg_key)
+                print(f"🐱 [{msg_key}] Pishi button clicked (collect_cat)")
 
     except asyncio.CancelledError:
         return
@@ -748,9 +690,8 @@ async def handle_bot_message(client, phone: str, message):
         if not user or not user.get("is_active"):
             return
 
-        selected_chat_ids = get_selected_chat_ids(user)
-
-        if message.chat.id not in selected_chat_ids:
+        # STRICT FILTERING: Ignore messages from unselected groups early
+        if not optimizations.message_is_from_selected_group(message, user.get("selected_groups", [])):
             return
 
         # ============================================================
@@ -1243,7 +1184,7 @@ async def _start_worker(phone: str):
 
         if acquired:
             try:
-                await session_manager.release_client(phone)
+                await session_manager.stop_and_cleanup_client(phone)
             except:
                 pass
 
@@ -1288,11 +1229,13 @@ async def _stop_worker(phone: str):
         pass
 
     try:
-        await session_manager.release_client(phone)
+        # Forcefully stop and remove client from memory
+        await session_manager.stop_and_cleanup_client(phone)
     except Exception as e:
-        print(f"❌ release_client error [{phone}]: {e}")
+        print(f"❌ stop_and_cleanup_client error [{phone}]: {e}")
 
     _cancel_phone_click_tasks(phone)
+    optimizations.force_gc(f"worker_stopped:{phone}")
 
     print(f"⏹ Worker stopped for {phone}")
 

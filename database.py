@@ -1,6 +1,7 @@
 import os
 import json
 import threading
+from contextlib import contextmanager
 
 import psycopg2
 import psycopg2.extras
@@ -75,6 +76,27 @@ def get_conn():
     return _local.conn
 
 
+@contextmanager
+def get_db_cursor(commit: bool = False, dict_cursor: bool = False):
+    conn = get_conn()
+    if dict_cursor:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    else:
+        cur = conn.cursor()
+    try:
+        yield cur
+        if commit:
+            conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
+
+
 def encrypt_session(session_string: str) -> str:
     if not session_string:
         return ""
@@ -93,209 +115,205 @@ def decrypt_session(encrypted_string: str) -> str:
 
 
 def init_db():
-    conn = get_conn()
-    cur = conn.cursor()
+    with get_db_cursor(commit=True) as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS web_users (
+                id SERIAL PRIMARY KEY,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                is_admin INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
 
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS web_users (
-            id SERIAL PRIMARY KEY,
-            username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            is_admin INTEGER DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS invites (
+                id SERIAL PRIMARY KEY,
+                code TEXT UNIQUE NOT NULL,
+                used INTEGER DEFAULT 0,
+                used_by_user_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
 
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS invites (
-            id SERIAL PRIMARY KEY,
-            code TEXT UNIQUE NOT NULL,
-            used INTEGER DEFAULT 0,
-            used_by_user_id INTEGER,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS tg_accounts (
+                phone TEXT PRIMARY KEY,
+                owner_id INTEGER NOT NULL,
+                session_string TEXT NOT NULL,
+                selected_groups TEXT DEFAULT '[]',
+                meow_enabled INTEGER DEFAULT 0,
+                pishi_enabled INTEGER DEFAULT 0,
+                fishing_enabled INTEGER DEFAULT 0,
+                is_active INTEGER DEFAULT 0,
+                cached_groups TEXT DEFAULT '[]',
+                meow_next_run BIGINT DEFAULT 0,
+                pishi_next_run BIGINT DEFAULT 0,
+                fishing_next_run BIGINT DEFAULT 0,
+                fishing_status_check_at BIGINT DEFAULT 0,
+                fishing_periodic_check_at BIGINT DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
 
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS tg_accounts (
-            phone TEXT PRIMARY KEY,
-            owner_id INTEGER NOT NULL,
-            session_string TEXT NOT NULL,
-            selected_groups TEXT DEFAULT '[]',
-            meow_enabled INTEGER DEFAULT 0,
-            pishi_enabled INTEGER DEFAULT 0,
-            fishing_enabled INTEGER DEFAULT 0,
-            is_active INTEGER DEFAULT 0,
-            cached_groups TEXT DEFAULT '[]',
-            meow_next_run BIGINT DEFAULT 0,
-            pishi_next_run BIGINT DEFAULT 0,
-            fishing_next_run BIGINT DEFAULT 0,
-            fishing_status_check_at BIGINT DEFAULT 0,
-            fishing_periodic_check_at BIGINT DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+        """)
 
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS settings (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        )
-    """)
+        # Compatibility migrations for older databases
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='pishi_enabled'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN pishi_enabled INTEGER DEFAULT 0;
+                END IF;
 
-    # Compatibility migrations for older databases
-    cur.execute("""
-        DO $$
-        BEGIN
-            IF NOT EXISTS (
-                SELECT 1 FROM information_schema.columns
-                WHERE table_name='tg_accounts' AND column_name='pishi_enabled'
-            ) THEN
-                ALTER TABLE tg_accounts ADD COLUMN pishi_enabled INTEGER DEFAULT 0;
-            END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='fishing_enabled'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN fishing_enabled INTEGER DEFAULT 0;
+                END IF;
 
-            IF NOT EXISTS (
-                SELECT 1 FROM information_schema.columns
-                WHERE table_name='tg_accounts' AND column_name='fishing_enabled'
-            ) THEN
-                ALTER TABLE tg_accounts ADD COLUMN fishing_enabled INTEGER DEFAULT 0;
-            END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='meow_next_run'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN meow_next_run BIGINT DEFAULT 0;
+                END IF;
 
-            IF NOT EXISTS (
-                SELECT 1 FROM information_schema.columns
-                WHERE table_name='tg_accounts' AND column_name='meow_next_run'
-            ) THEN
-                ALTER TABLE tg_accounts ADD COLUMN meow_next_run BIGINT DEFAULT 0;
-            END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='pishi_next_run'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN pishi_next_run BIGINT DEFAULT 0;
+                END IF;
 
-            IF NOT EXISTS (
-                SELECT 1 FROM information_schema.columns
-                WHERE table_name='tg_accounts' AND column_name='pishi_next_run'
-            ) THEN
-                ALTER TABLE tg_accounts ADD COLUMN pishi_next_run BIGINT DEFAULT 0;
-            END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='fishing_next_run'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN fishing_next_run BIGINT DEFAULT 0;
+                END IF;
 
-            IF NOT EXISTS (
-                SELECT 1 FROM information_schema.columns
-                WHERE table_name='tg_accounts' AND column_name='fishing_next_run'
-            ) THEN
-                ALTER TABLE tg_accounts ADD COLUMN fishing_next_run BIGINT DEFAULT 0;
-            END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='fishing_status_check_at'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN fishing_status_check_at BIGINT DEFAULT 0;
+                END IF;
 
-            IF NOT EXISTS (
-                SELECT 1 FROM information_schema.columns
-                WHERE table_name='tg_accounts' AND column_name='fishing_status_check_at'
-            ) THEN
-                ALTER TABLE tg_accounts ADD COLUMN fishing_status_check_at BIGINT DEFAULT 0;
-            END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='fishing_periodic_check_at'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN fishing_periodic_check_at BIGINT DEFAULT 0;
+                END IF;
+            END $$;
+        """)
 
-            IF NOT EXISTS (
-                SELECT 1 FROM information_schema.columns
-                WHERE table_name='tg_accounts' AND column_name='fishing_periodic_check_at'
-            ) THEN
-                ALTER TABLE tg_accounts ADD COLUMN fishing_periodic_check_at BIGINT DEFAULT 0;
-            END IF;
-        END $$;
-    """)
+        # Convert old REAL / DOUBLE PRECISION timer columns to BIGINT
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts'
+                      AND column_name='meow_next_run'
+                      AND data_type <> 'bigint'
+                ) THEN
+                    ALTER TABLE tg_accounts
+                    ALTER COLUMN meow_next_run
+                    TYPE BIGINT
+                    USING ROUND(COALESCE(meow_next_run, 0))::BIGINT;
 
-    # Convert old REAL / DOUBLE PRECISION timer columns to BIGINT
-    cur.execute("""
-        DO $$
-        BEGIN
-            IF EXISTS (
-                SELECT 1 FROM information_schema.columns
-                WHERE table_name='tg_accounts'
-                  AND column_name='meow_next_run'
-                  AND data_type <> 'bigint'
-            ) THEN
-                ALTER TABLE tg_accounts
-                ALTER COLUMN meow_next_run
-                TYPE BIGINT
-                USING ROUND(COALESCE(meow_next_run, 0))::BIGINT;
+                    ALTER TABLE tg_accounts
+                    ALTER COLUMN meow_next_run
+                    SET DEFAULT 0;
+                END IF;
 
-                ALTER TABLE tg_accounts
-                ALTER COLUMN meow_next_run
-                SET DEFAULT 0;
-            END IF;
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts'
+                      AND column_name='pishi_next_run'
+                      AND data_type <> 'bigint'
+                ) THEN
+                    ALTER TABLE tg_accounts
+                    ALTER COLUMN pishi_next_run
+                    TYPE BIGINT
+                    USING ROUND(COALESCE(pishi_next_run, 0))::BIGINT;
 
-            IF EXISTS (
-                SELECT 1 FROM information_schema.columns
-                WHERE table_name='tg_accounts'
-                  AND column_name='pishi_next_run'
-                  AND data_type <> 'bigint'
-            ) THEN
-                ALTER TABLE tg_accounts
-                ALTER COLUMN pishi_next_run
-                TYPE BIGINT
-                USING ROUND(COALESCE(pishi_next_run, 0))::BIGINT;
+                    ALTER TABLE tg_accounts
+                    ALTER COLUMN pishi_next_run
+                    SET DEFAULT 0;
+                END IF;
 
-                ALTER TABLE tg_accounts
-                ALTER COLUMN pishi_next_run
-                SET DEFAULT 0;
-            END IF;
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts'
+                      AND column_name='fishing_next_run'
+                      AND data_type <> 'bigint'
+                ) THEN
+                    ALTER TABLE tg_accounts
+                    ALTER COLUMN fishing_next_run
+                    TYPE BIGINT
+                    USING ROUND(COALESCE(fishing_next_run, 0))::BIGINT;
 
-            IF EXISTS (
-                SELECT 1 FROM information_schema.columns
-                WHERE table_name='tg_accounts'
-                  AND column_name='fishing_next_run'
-                  AND data_type <> 'bigint'
-            ) THEN
-                ALTER TABLE tg_accounts
-                ALTER COLUMN fishing_next_run
-                TYPE BIGINT
-                USING ROUND(COALESCE(fishing_next_run, 0))::BIGINT;
+                    ALTER TABLE tg_accounts
+                    ALTER COLUMN fishing_next_run
+                    SET DEFAULT 0;
+                END IF;
 
-                ALTER TABLE tg_accounts
-                ALTER COLUMN fishing_next_run
-                SET DEFAULT 0;
-            END IF;
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts'
+                      AND column_name='fishing_status_check_at'
+                      AND data_type <> 'bigint'
+                ) THEN
+                    ALTER TABLE tg_accounts
+                    ALTER COLUMN fishing_status_check_at
+                    TYPE BIGINT
+                    USING ROUND(COALESCE(fishing_status_check_at, 0))::BIGINT;
 
-            IF EXISTS (
-                SELECT 1 FROM information_schema.columns
-                WHERE table_name='tg_accounts'
-                  AND column_name='fishing_status_check_at'
-                  AND data_type <> 'bigint'
-            ) THEN
-                ALTER TABLE tg_accounts
-                ALTER COLUMN fishing_status_check_at
-                TYPE BIGINT
-                USING ROUND(COALESCE(fishing_status_check_at, 0))::BIGINT;
+                    ALTER TABLE tg_accounts
+                    ALTER COLUMN fishing_status_check_at
+                    SET DEFAULT 0;
+                END IF;
 
-                ALTER TABLE tg_accounts
-                ALTER COLUMN fishing_status_check_at
-                SET DEFAULT 0;
-            END IF;
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts'
+                      AND column_name='fishing_periodic_check_at'
+                      AND data_type <> 'bigint'
+                ) THEN
+                    ALTER TABLE tg_accounts
+                    ALTER COLUMN fishing_periodic_check_at
+                    TYPE BIGINT
+                    USING ROUND(COALESCE(fishing_periodic_check_at, 0))::BIGINT;
 
-            IF EXISTS (
-                SELECT 1 FROM information_schema.columns
-                WHERE table_name='tg_accounts'
-                  AND column_name='fishing_periodic_check_at'
-                  AND data_type <> 'bigint'
-            ) THEN
-                ALTER TABLE tg_accounts
-                ALTER COLUMN fishing_periodic_check_at
-                TYPE BIGINT
-                USING ROUND(COALESCE(fishing_periodic_check_at, 0))::BIGINT;
+                    ALTER TABLE tg_accounts
+                    ALTER COLUMN fishing_periodic_check_at
+                    SET DEFAULT 0;
+                END IF;
+            END $$;
+        """)
 
-                ALTER TABLE tg_accounts
-                ALTER COLUMN fishing_periodic_check_at
-                SET DEFAULT 0;
-            END IF;
-        END $$;
-    """)
-
-    # Insert default settings
-    for key, value in DEFAULT_SETTINGS.items():
-        cur.execute(
-            """
-            INSERT INTO settings (key, value)
-            VALUES (%s, %s)
-            ON CONFLICT (key) DO NOTHING
-            """,
-            (key, value)
-        )
-
-    conn.commit()
+        # Insert default settings
+        for key, value in DEFAULT_SETTINGS.items():
+            cur.execute(
+                """
+                INSERT INTO settings (key, value)
+                VALUES (%s, %s)
+                ON CONFLICT (key) DO NOTHING
+                """,
+                (key, value)
+            )
 
     admin_user = os.getenv("ADMIN_USERNAME")
     admin_pass = os.getenv("ADMIN_PASSWORD")
@@ -311,13 +329,9 @@ def init_db():
 # ============================================================
 
 def get_setting(key, default=None):
-    conn = get_conn()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-
-    cur.execute("SELECT value FROM settings WHERE key = %s", (key,))
-    row = cur.fetchone()
-
-    cur.close()
+    with get_db_cursor(dict_cursor=True) as cur:
+        cur.execute("SELECT value FROM settings WHERE key = %s", (key,))
+        row = cur.fetchone()
 
     if row:
         return row["value"]
@@ -326,13 +340,9 @@ def get_setting(key, default=None):
 
 
 def get_all_settings():
-    conn = get_conn()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-
-    cur.execute("SELECT key, value FROM settings")
-    rows = cur.fetchall()
-
-    cur.close()
+    with get_db_cursor(dict_cursor=True) as cur:
+        cur.execute("SELECT key, value FROM settings")
+        rows = cur.fetchall()
 
     data = DEFAULT_SETTINGS.copy()
 
@@ -343,21 +353,16 @@ def get_all_settings():
 
 
 def set_setting(key, value):
-    conn = get_conn()
-    cur = conn.cursor()
-
-    cur.execute(
-        """
-        INSERT INTO settings (key, value)
-        VALUES (%s, %s)
-        ON CONFLICT (key) DO UPDATE SET
-            value = EXCLUDED.value
-        """,
-        (key, str(value))
-    )
-
-    conn.commit()
-    cur.close()
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            INSERT INTO settings (key, value)
+            VALUES (%s, %s)
+            ON CONFLICT (key) DO UPDATE SET
+                value = EXCLUDED.value
+            """,
+            (key, str(value))
+        )
 
 
 def get_setting_int(key, default=0):
@@ -383,28 +388,18 @@ def get_setting_float(key, default=0.0):
 # ============================================================
 
 def create_web_user(username, password, is_admin=False):
-    conn = get_conn()
-    cur = conn.cursor()
-
     pw_hash = generate_password_hash(password)
-
-    cur.execute(
-        "INSERT INTO web_users (username, password_hash, is_admin) VALUES (%s, %s, %s)",
-        (username, pw_hash, 1 if is_admin else 0)
-    )
-
-    conn.commit()
-    cur.close()
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            "INSERT INTO web_users (username, password_hash, is_admin) VALUES (%s, %s, %s)",
+            (username, pw_hash, 1 if is_admin else 0)
+        )
 
 
 def get_web_user(username):
-    conn = get_conn()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-
-    cur.execute("SELECT * FROM web_users WHERE username = %s", (username,))
-    row = cur.fetchone()
-
-    cur.close()
+    with get_db_cursor(dict_cursor=True) as cur:
+        cur.execute("SELECT * FROM web_users WHERE username = %s", (username,))
+        row = cur.fetchone()
 
     return dict(row) if row else None
 
@@ -423,55 +418,36 @@ def verify_web_user(username, password):
 # ============================================================
 
 def create_invite(code):
-    conn = get_conn()
-    cur = conn.cursor()
-
     try:
-        cur.execute("INSERT INTO invites (code) VALUES (%s)", (code,))
-        conn.commit()
+        with get_db_cursor(commit=True) as cur:
+            cur.execute("INSERT INTO invites (code) VALUES (%s)", (code,))
         return True
     except psycopg2.IntegrityError:
-        conn.rollback()
         return False
-    finally:
-        cur.close()
 
 
 def get_all_invites():
-    conn = get_conn()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-
-    cur.execute("SELECT * FROM invites ORDER BY created_at DESC")
-    rows = [dict(row) for row in cur.fetchall()]
-
-    cur.close()
+    with get_db_cursor(dict_cursor=True) as cur:
+        cur.execute("SELECT * FROM invites ORDER BY created_at DESC")
+        rows = [dict(row) for row in cur.fetchall()]
 
     return rows
 
 
 def get_valid_invite(code):
-    conn = get_conn()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-
-    cur.execute("SELECT * FROM invites WHERE code = %s AND used = 0", (code,))
-    row = cur.fetchone()
-
-    cur.close()
+    with get_db_cursor(dict_cursor=True) as cur:
+        cur.execute("SELECT * FROM invites WHERE code = %s AND used = 0", (code,))
+        row = cur.fetchone()
 
     return dict(row) if row else None
 
 
 def use_invite(code, user_id):
-    conn = get_conn()
-    cur = conn.cursor()
-
-    cur.execute(
-        "UPDATE invites SET used = 1, used_by_user_id = %s WHERE code = %s",
-        (user_id, code)
-    )
-
-    conn.commit()
-    cur.close()
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            "UPDATE invites SET used = 1, used_by_user_id = %s WHERE code = %s",
+            (user_id, code)
+        )
 
 
 # ============================================================
@@ -566,113 +542,89 @@ def save_tg_account(
         if fishing_next_run is None:
             fishing_next_run = 0
 
-    conn = get_conn()
-    cur = conn.cursor()
-
     encrypted_session = encrypt_session(session_string)
 
-    cur.execute(
-        """
-        INSERT INTO tg_accounts (
-            phone,
-            owner_id,
-            session_string,
-            selected_groups,
-            meow_enabled,
-            pishi_enabled,
-            fishing_enabled,
-            is_active,
-            cached_groups,
-            meow_next_run,
-            pishi_next_run,
-            fishing_next_run
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            INSERT INTO tg_accounts (
+                phone,
+                owner_id,
+                session_string,
+                selected_groups,
+                meow_enabled,
+                pishi_enabled,
+                fishing_enabled,
+                is_active,
+                cached_groups,
+                meow_next_run,
+                pishi_next_run,
+                fishing_next_run
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (phone) DO UPDATE SET
+                owner_id = EXCLUDED.owner_id,
+                session_string = EXCLUDED.session_string,
+                selected_groups = EXCLUDED.selected_groups,
+                meow_enabled = EXCLUDED.meow_enabled,
+                pishi_enabled = EXCLUDED.pishi_enabled,
+                fishing_enabled = EXCLUDED.fishing_enabled,
+                is_active = EXCLUDED.is_active,
+                cached_groups = EXCLUDED.cached_groups,
+                meow_next_run = EXCLUDED.meow_next_run,
+                pishi_next_run = EXCLUDED.pishi_next_run,
+                fishing_next_run = EXCLUDED.fishing_next_run
+            """,
+            (
+                str(phone),
+                owner_id,
+                encrypted_session,
+                _json_dumps(selected_groups),
+                _bool(meow_enabled),
+                _bool(pishi_enabled),
+                _bool(fishing_enabled),
+                _bool(is_active),
+                _json_dumps(cached_groups),
+                int(float(meow_next_run or 0)),
+                int(float(pishi_next_run or 0)),
+                int(float(fishing_next_run or 0))
+            )
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (phone) DO UPDATE SET
-            owner_id = EXCLUDED.owner_id,
-            session_string = EXCLUDED.session_string,
-            selected_groups = EXCLUDED.selected_groups,
-            meow_enabled = EXCLUDED.meow_enabled,
-            pishi_enabled = EXCLUDED.pishi_enabled,
-            fishing_enabled = EXCLUDED.fishing_enabled,
-            is_active = EXCLUDED.is_active,
-            cached_groups = EXCLUDED.cached_groups,
-            meow_next_run = EXCLUDED.meow_next_run,
-            pishi_next_run = EXCLUDED.pishi_next_run,
-            fishing_next_run = EXCLUDED.fishing_next_run
-        """,
-        (
-            str(phone),
-            owner_id,
-            encrypted_session,
-            _json_dumps(selected_groups),
-            _bool(meow_enabled),
-            _bool(pishi_enabled),
-            _bool(fishing_enabled),
-            _bool(is_active),
-            _json_dumps(cached_groups),
-            int(float(meow_next_run or 0)),
-            int(float(pishi_next_run or 0)),
-            int(float(fishing_next_run or 0))
-        )
-    )
-
-    conn.commit()
-    cur.close()
 
 
 def get_tg_account(phone):
-    conn = get_conn()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-
-    cur.execute("SELECT * FROM tg_accounts WHERE phone = %s", (str(phone),))
-    row = cur.fetchone()
-
-    cur.close()
+    with get_db_cursor(dict_cursor=True) as cur:
+        cur.execute("SELECT * FROM tg_accounts WHERE phone = %s", (str(phone),))
+        row = cur.fetchone()
 
     return _row_to_account(row)
 
 
 def get_tg_accounts_for_user(owner_id):
-    conn = get_conn()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-
-    cur.execute(
-        "SELECT * FROM tg_accounts WHERE owner_id = %s ORDER BY created_at DESC",
-        (owner_id,)
-    )
-
-    rows = [_row_to_account(row) for row in cur.fetchall()]
-
-    cur.close()
+    with get_db_cursor(dict_cursor=True) as cur:
+        cur.execute(
+            "SELECT * FROM tg_accounts WHERE owner_id = %s ORDER BY created_at DESC",
+            (owner_id,)
+        )
+        rows = [_row_to_account(row) for row in cur.fetchall()]
 
     return rows
 
 
 def get_all_tg_accounts():
-    conn = get_conn()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-
-    cur.execute("SELECT * FROM tg_accounts")
-
-    rows = [_row_to_account(row) for row in cur.fetchall()]
-
-    cur.close()
+    with get_db_cursor(dict_cursor=True) as cur:
+        cur.execute("SELECT * FROM tg_accounts")
+        rows = [_row_to_account(row) for row in cur.fetchall()]
 
     return rows
 
 
 def delete_tg_account(phone, owner_id):
-    conn = get_conn()
-    cur = conn.cursor()
-
-    cur.execute(
-        "DELETE FROM tg_accounts WHERE phone = %s AND owner_id = %s",
-        (str(phone), owner_id)
-    )
-
-    conn.commit()
-    cur.close()
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            "DELETE FROM tg_accounts WHERE phone = %s AND owner_id = %s",
+            (str(phone), owner_id)
+        )
 
 
 def update_account_next_run(
@@ -681,28 +633,23 @@ def update_account_next_run(
     pishi_next_run=None,
     fishing_next_run=None
 ):
-    conn = get_conn()
-    cur = conn.cursor()
-
-    cur.execute(
-        """
-        UPDATE tg_accounts
-        SET
-            meow_next_run = COALESCE(%s, meow_next_run),
-            pishi_next_run = COALESCE(%s, pishi_next_run),
-            fishing_next_run = COALESCE(%s, fishing_next_run)
-        WHERE phone = %s
-        """,
-        (
-            _int_or_none(meow_next_run),
-            _int_or_none(pishi_next_run),
-            _int_or_none(fishing_next_run),
-            str(phone)
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            UPDATE tg_accounts
+            SET
+                meow_next_run = COALESCE(%s, meow_next_run),
+                pishi_next_run = COALESCE(%s, pishi_next_run),
+                fishing_next_run = COALESCE(%s, fishing_next_run)
+            WHERE phone = %s
+            """,
+            (
+                _int_or_none(meow_next_run),
+                _int_or_none(pishi_next_run),
+                _int_or_none(fishing_next_run),
+                str(phone)
+            )
         )
-    )
-
-    conn.commit()
-    cur.close()
 
 
 # ============================================================
@@ -741,56 +688,49 @@ def claim_dynamic_feature(
         waiting_timestamp = int(float(waiting_timestamp))
         now = int(float(now))
 
-        conn = get_conn()
-        cur = conn.cursor()
+        with get_db_cursor(commit=True) as cur:
+            if mode == "send_initial":
+                cur.execute(
+                    f"""
+                    UPDATE tg_accounts
+                    SET {col} = %s
+                    WHERE phone = %s
+                      AND ({col} IS NULL OR {col} = 0)
+                    """,
+                    (waiting_timestamp, str(phone))
+                )
 
-        if mode == "send_initial":
-            cur.execute(
-                f"""
-                UPDATE tg_accounts
-                SET {col} = %s
-                WHERE phone = %s
-                  AND ({col} IS NULL OR {col} = 0)
-                """,
-                (waiting_timestamp, str(phone))
-            )
+            elif mode == "send_due":
+                cur.execute(
+                    f"""
+                    UPDATE tg_accounts
+                    SET {col} = %s
+                    WHERE phone = %s
+                      AND {col} > 0
+                      AND {col} <= %s
+                    """,
+                    (waiting_timestamp, str(phone), now)
+                )
 
-        elif mode == "send_due":
-            cur.execute(
-                f"""
-                UPDATE tg_accounts
-                SET {col} = %s
-                WHERE phone = %s
-                  AND {col} > 0
-                  AND {col} <= %s
-                """,
-                (waiting_timestamp, str(phone), now)
-            )
+            elif mode == "retry_after_parse_timeout":
+                timeout = max(0, int(float(timeout)))
+                cutoff = now - timeout
 
-        elif mode == "retry_after_parse_timeout":
-            timeout = max(0, int(float(timeout)))
-            cutoff = now - timeout
+                cur.execute(
+                    f"""
+                    UPDATE tg_accounts
+                    SET {col} = %s
+                    WHERE phone = %s
+                      AND {col} < 0
+                      AND (-{col}) <= %s
+                    """,
+                    (waiting_timestamp, str(phone), cutoff)
+                )
 
-            cur.execute(
-                f"""
-                UPDATE tg_accounts
-                SET {col} = %s
-                WHERE phone = %s
-                  AND {col} < 0
-                  AND (-{col}) <= %s
-                """,
-                (waiting_timestamp, str(phone), cutoff)
-            )
+            else:
+                return False
 
-        else:
-            cur.close()
-            return False
-
-        conn.commit()
-
-        claimed = cur.rowcount > 0
-
-        cur.close()
+            claimed = cur.rowcount > 0
 
         return claimed
 
@@ -816,24 +756,17 @@ def claim_interval_feature(phone, feature, scheduled_timestamp, now):
         scheduled_timestamp = int(float(scheduled_timestamp))
         now = int(float(now))
 
-        conn = get_conn()
-        cur = conn.cursor()
-
-        cur.execute(
-            f"""
-            UPDATE tg_accounts
-            SET {col} = %s
-            WHERE phone = %s
-              AND ({col} IS NULL OR {col} <= %s)
-            """,
-            (scheduled_timestamp, str(phone), now)
-        )
-
-        conn.commit()
-
-        claimed = cur.rowcount > 0
-
-        cur.close()
+        with get_db_cursor(commit=True) as cur:
+            cur.execute(
+                f"""
+                UPDATE tg_accounts
+                SET {col} = %s
+                WHERE phone = %s
+                  AND ({col} IS NULL OR {col} <= %s)
+                """,
+                (scheduled_timestamp, str(phone), now)
+            )
+            claimed = cur.rowcount > 0
 
         return claimed
 
@@ -847,45 +780,33 @@ def claim_interval_feature(phone, feature, scheduled_timestamp, now):
 # ============================================================
 
 def update_fishing_status_check_at(phone, timestamp):
-    conn = get_conn()
-    cur = conn.cursor()
-
-    cur.execute(
-        """
-        UPDATE tg_accounts
-        SET fishing_status_check_at = %s
-        WHERE phone = %s
-        """,
-        (int(float(timestamp)), str(phone))
-    )
-
-    conn.commit()
-    cur.close()
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            UPDATE tg_accounts
+            SET fishing_status_check_at = %s
+            WHERE phone = %s
+            """,
+            (int(float(timestamp)), str(phone))
+        )
 
 
 def claim_fishing_status_check(phone, now):
     """
     Atomically claims a scheduled post-click Fishing status check.
     """
-    conn = get_conn()
-    cur = conn.cursor()
-
-    cur.execute(
-        """
-        UPDATE tg_accounts
-        SET fishing_status_check_at = 0
-        WHERE phone = %s
-          AND fishing_status_check_at > 0
-          AND fishing_status_check_at <= %s
-        """,
-        (str(phone), int(float(now)))
-    )
-
-    conn.commit()
-
-    claimed = cur.rowcount > 0
-
-    cur.close()
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            UPDATE tg_accounts
+            SET fishing_status_check_at = 0
+            WHERE phone = %s
+              AND fishing_status_check_at > 0
+              AND fishing_status_check_at <= %s
+            """,
+            (str(phone), int(float(now)))
+        )
+        claimed = cur.rowcount > 0
 
     return claimed
 
@@ -894,45 +815,33 @@ def claim_fishing_periodic_check(phone, next_check_at, now):
     """
     Atomically claims the periodic Fishing time availability check.
     """
-    conn = get_conn()
-    cur = conn.cursor()
-
-    cur.execute(
-        """
-        UPDATE tg_accounts
-        SET fishing_periodic_check_at = %s
-        WHERE phone = %s
-          AND (
-              fishing_periodic_check_at IS NULL
-              OR fishing_periodic_check_at <= %s
-          )
-        """,
-        (int(float(next_check_at)), str(phone), int(float(now)))
-    )
-
-    conn.commit()
-
-    claimed = cur.rowcount > 0
-
-    cur.close()
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            UPDATE tg_accounts
+            SET fishing_periodic_check_at = %s
+            WHERE phone = %s
+              AND (
+                  fishing_periodic_check_at IS NULL
+                  OR fishing_periodic_check_at <= %s
+              )
+            """,
+            (int(float(next_check_at)), str(phone), int(float(now)))
+        )
+        claimed = cur.rowcount > 0
 
     return claimed
 
 
 def reset_fishing_checks(phone):
-    conn = get_conn()
-    cur = conn.cursor()
-
-    cur.execute(
-        """
-        UPDATE tg_accounts
-        SET
-            fishing_status_check_at = 0,
-            fishing_periodic_check_at = 0
-        WHERE phone = %s
-        """,
-        (str(phone),)
-    )
-
-    conn.commit()
-    cur.close()
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            UPDATE tg_accounts
+            SET
+                fishing_status_check_at = 0,
+                fishing_periodic_check_at = 0
+            WHERE phone = %s
+            """,
+            (str(phone),)
+        )

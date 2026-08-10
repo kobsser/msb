@@ -11,6 +11,7 @@ except ImportError:
 
 from config import API_ID, API_HASH
 from database import get_tg_account, get_setting_int
+import optimizations
 
 
 CLIENT_STATES = {}
@@ -200,6 +201,35 @@ async def release_client(phone: str, stop_if_idle: bool = True):
             state["client"] = None
             state["setup_done"] = False
             state["last_stop"] = time.time()
+            optimizations.force_gc(f"client_released:{phone}")
+
+
+async def stop_and_cleanup_client(phone: str):
+    """
+    Forcefully stops a client, removes it from memory entirely, and calls GC.
+    This should be used when an account is deleted, toggled off, or failed permanently.
+    """
+    phone = str(phone)
+    state = CLIENT_STATES.pop(phone, None)
+
+    if not state:
+        return
+
+    async with state["lock"]:
+        client = state.get("client")
+
+        if client:
+            try:
+                await client.stop()
+            except Exception:
+                pass
+
+        state["client"] = None
+        state["refs"] = 0
+        state["setup_done"] = False
+        state["last_stop"] = time.time()
+
+    optimizations.force_gc(f"client_cleaned:{phone}")
 
 
 async def run_with_client(phone: str, job, setup=None):

@@ -12,5 +12,4 @@ COPY . .
 
 ENV PYTHONUNBUFFERED=1
 
-# Railway خودش PORT را می‌دهد
-CMD gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120 app:app
+CMD gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 2 --timeout 120 app:app

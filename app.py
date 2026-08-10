@@ -48,6 +48,7 @@ from clients import (
 
 import workers
 import session_manager
+import optimizations
 
 
 # ============================================================
@@ -59,6 +60,7 @@ LOOP = asyncio.new_event_loop()
 
 def _run_loop():
     asyncio.set_event_loop(LOOP)
+    optimizations.ensure_gc_task()
     LOOP.run_forever()
 
 
