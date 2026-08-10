@@ -23,6 +23,7 @@ from config import SECRET_KEY
 from database import (
     init_db,
     get_web_user,
+    get_web_user_by_id,
     verify_web_user,
     create_web_user,
     get_valid_invite,
@@ -37,6 +38,8 @@ from database import (
     set_setting,
     get_all_settings,
     update_account_next_run,
+    update_account_meta,
+    set_backup_group_id,
     reset_fishing_checks
 )
 
@@ -164,10 +167,6 @@ def normalize_group_id(value: str):
 
 
 def finalize_new_account(phone, session_string):
-    """
-    Saves the new account, waits a little, then fetches groups
-    using the shared session manager.
-    """
     save_tg_account(
         phone=phone,
         owner_id=session["user_id"],
@@ -177,7 +176,6 @@ def finalize_new_account(phone, session_string):
 
     session.pop("pending_phone", None)
 
-    # Small pause after login before opening another client
     safe_run_async(asyncio.sleep(3), timeout=10)
 
     groups = safe_run_async(
@@ -200,6 +198,15 @@ def finalize_new_account(phone, session_string):
                 is_active=account["is_active"],
                 cached_groups=groups
             )
+
+        # Fetch the account name once (when not in database)
+        try:
+            name = safe_run_async(session_manager.get_me_name(phone), timeout=30)
+
+            if isinstance(name, str) and not is_error_result(name) and name.strip():
+                update_account_meta(phone, account_name=name.strip())
+        except Exception:
+            pass
 
         return True, groups
 
@@ -286,7 +293,115 @@ def logout():
 @login_required
 def dashboard():
     accounts = get_tg_accounts_for_user(session["user_id"])
-    return render_template("dashboard.html", accounts=accounts)
+
+    user = get_web_user_by_id(session["user_id"])
+    backup_group_id = (user or {}).get("backup_group_id") or ""
+
+    return render_template(
+        "dashboard.html",
+        accounts=accounts,
+        backup_group_id=backup_group_id
+    )
+
+
+# ============================================================
+# Backup group / status / profile / transfer
+# ============================================================
+
+@app.route("/backup_group", methods=["POST"])
+@login_required
+def save_backup_group():
+    value = request.form.get("backup_group_id", "").strip()
+    normalized = normalize_group_id(value) if value else ""
+
+    user = get_web_user_by_id(session["user_id"])
+    old = (user or {}).get("backup_group_id") or ""
+
+    set_backup_group_id(session["user_id"], normalized or "")
+
+    if normalized and normalized != old:
+        # Automatically check membership once when the backup group changes
+        result = safe_run_async(
+            workers.update_status_for_user(session["user_id"]),
+            timeout=110
+        )
+
+        if is_error_result(result):
+            flash("گروه بکاپ ذخیره شد؛ بررسی وضعیت در پس‌زمینه ادامه دارد", "warning")
+        else:
+            flash("گروه بکاپ ذخیره شد و وضعیت اکانت‌ها بررسی شد", "success")
+    else:
+        flash("گروه بکاپ ذخیره شد", "success")
+
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/update_status", methods=["POST"])
+@login_required
+def update_status():
+    result = safe_run_async(
+        workers.update_status_for_user(session["user_id"]),
+        timeout=110
+    )
+
+    if is_error_result(result):
+        flash("بروزرسانی در پس‌زمینه ادامه دارد", "warning")
+    else:
+        flash("نام و وضعیت گروه بکاپ اکانت‌ها بروزرسانی شد", "success")
+
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/update_profiles", methods=["POST"])
+@login_required
+def update_profiles():
+    user = get_web_user_by_id(session["user_id"])
+    backup_group_id = (user or {}).get("backup_group_id") or ""
+
+    if not backup_group_id:
+        flash("ابتدا آیدی گروه بکاپ را تنظیم کنید", "danger")
+        return redirect(url_for("dashboard"))
+
+    result = safe_run_async(
+        workers.update_profiles_for_user(session["user_id"]),
+        timeout=110
+    )
+
+    if is_error_result(result):
+        flash("بروزرسانی میوهام در پس‌زمینه ادامه دارد", "warning")
+    else:
+        flash("اطلاعات اکانت‌ها (میوهام) بروزرسانی شد", "success")
+
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/transfer", methods=["POST"])
+@login_required
+def transfer():
+    user = get_web_user_by_id(session["user_id"])
+    backup_group_id = (user or {}).get("backup_group_id") or ""
+
+    if not backup_group_id:
+        flash("ابتدا آیدی گروه بکاپ را تنظیم کنید", "danger")
+        return redirect(url_for("dashboard"))
+
+    target = str(request.form.get("target_user_id", "")).strip().translate(FA_DIGITS)
+
+    if not re.fullmatch(r"\d+", target):
+        flash("آیدی کاربر نامعتبر است", "danger")
+        return redirect(url_for("dashboard"))
+
+    result = safe_run_async(
+        workers.transfer_for_user(session["user_id"], target),
+        timeout=110
+    )
+
+    if is_error_result(result):
+        flash("انتقال در پس‌زمینه ادامه دارد", "warning")
+    else:
+        flash("دستور انتقال برای اکانت‌ها ارسال شد", "success")
+
+    return redirect(url_for("dashboard"))
 
 
 # ============================================================
@@ -614,6 +729,11 @@ EDITABLE_SETTINGS = [
         "key": "MEOW_CLICK_DELAY",
         "label": "Meow click delay (seconds)",
         "type": "float"
+    },
+    {
+        "key": "PROFILE_FETCH_TIMEOUT",
+        "label": "میوهام reply timeout (seconds)",
+        "type": "number"
     },
     {
         "key": "TWO_PART_TIME_MODE",

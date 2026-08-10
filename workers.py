@@ -13,7 +13,11 @@ from config import BOT_USER_ID
 from database import (
     get_tg_account,
     get_all_tg_accounts,
+    get_tg_accounts_for_user,
+    get_web_user_by_id,
     update_account_next_run,
+    update_account_meta,
+    update_account_profile,
     get_setting,
     get_setting_int,
     get_setting_float,
@@ -40,6 +44,7 @@ _GLOBAL_LOOP = None
 
 MEOW_TRACKED_MESSAGES = {}
 TRACKED_FISHING_MESSAGES = {}
+BACKUP_TRACKED_MESSAGES = {}
 
 CLICKED_FISHING_MESSAGES = set()
 PISHI_CLICKED_MESSAGES = set()
@@ -57,6 +62,14 @@ FA_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789")
 COOLDOWN_RE = re.compile(
     r"(?:بعد از|باید|تا)\s*(?P<time>\d{1,3}(?:[:：.]\d{1,2}(?:[:：.]\d{1,2})?)?)"
 )
+
+# Profile (میوهام) parsing
+PROFILE_NAME_RE = re.compile(r"کاربر\s*[:：]\s*([^\n]+)")
+PROFILE_BALANCE_RE = re.compile(r"میو\s*پوینت\s*ها\s*[:：]\s*([\d,]+)")
+PROFILE_MEOW_RE = re.compile(r"میو\s*میو\s*ها\s*[:：]\s*([\d,]+)")
+PROFILE_CATS_RE = re.compile(r"پیشی\s*های\s*خیابونی\s*[:：]\s*([\d,]+)")
+PROFILE_RANK_RE = re.compile(r"رتبه\s*\(\s*([\d,]+)\s*\)")
+PROFILE_LEVEL_RE = re.compile(r"سطح\s*[:：]\s*(\d+)\s*\|\s*([\d,]+)\s*/\s*([\d,]+)")
 
 
 # ============================================================
@@ -153,9 +166,6 @@ def get_two_part_time_mode():
 
 
 def parse_cooldown_seconds(text: str):
-    """
-    Parses cooldown time from raw bot text.
-    """
     text = normalize_text(text)
 
     if not text:
@@ -163,7 +173,6 @@ def parse_cooldown_seconds(text: str):
 
     match = COOLDOWN_RE.search(text)
 
-    # If it's a colon/dot time like 4:30 or 1:02:03, parse it first
     if match and re.search(r"[:：.]", match.group("time")):
         parts = []
 
@@ -191,7 +200,6 @@ def parse_cooldown_seconds(text: str):
 
             return max(0, hours * 3600 + minutes * 60 + secs)
 
-    # Try explicit unit parsing: 2 ساعت، 30 دقیقه، 45 ثانیه
     seconds = 0
     found = False
 
@@ -213,7 +221,6 @@ def parse_cooldown_seconds(text: str):
     if found:
         return max(0, seconds)
 
-    # If only a single number was found, assume minutes
     if match:
         try:
             value = int(match.group("time"))
@@ -225,9 +232,6 @@ def parse_cooldown_seconds(text: str):
 
 
 def schedule_feature(phone: str, feature: str, seconds: int, jitter: int = 10):
-    """
-    Persists next run timestamp in database as integer Unix time.
-    """
     try:
         delay = max(3, int(seconds)) + random.randint(2, max(2, jitter) + 2)
         timestamp = int(time.time()) + delay
@@ -249,24 +253,12 @@ def schedule_feature(phone: str, feature: str, seconds: int, jitter: int = 10):
 
 
 def dynamic_action(account, feature: str, now: float):
-    """
-    Used mainly for Meow.
-
-    Returns:
-      send_initial
-      send_due
-      retry_after_parse_timeout
-      waiting
-      not_due
-    """
     next_run = int(float(account.get(f"{feature}_next_run") or 0))
     now = int(float(now))
 
-    # No saved parsed time yet
     if next_run == 0:
         return "send_initial"
 
-    # Waiting for parsed bot response
     if next_run < 0:
         timeout = setting_int("DYNAMIC_WAIT_TIMEOUT_SECONDS", 0)
         timeout = max(0, int(timeout))
@@ -278,7 +270,6 @@ def dynamic_action(account, feature: str, now: float):
 
         return "waiting"
 
-    # Parsed time reached
     if now >= next_run:
         return "send_due"
 
@@ -318,13 +309,11 @@ def _remember_clicked(storage, key, limit=5000):
 
 
 def is_meow_response(phone, message, normalized):
-    # Fishing messages should never be treated as Meow
     if "ماهی" in normalized or "ماهیا" in normalized:
         return False
 
     tracked_meow_id = MEOW_TRACKED_MESSAGES.get(phone, {}).get(message.chat.id)
 
-    # Best case: bot replied directly to our sent "میو"
     if (
         getattr(message, "reply_to_message_id", None)
         and tracked_meow_id
@@ -332,7 +321,6 @@ def is_meow_response(phone, message, normalized):
     ):
         return True
 
-    # Do not treat Pishi messages as Meow unless it replied to our Meow
     if "پیشی" in normalized:
         return False
 
@@ -340,9 +328,6 @@ def is_meow_response(phone, message, normalized):
 
 
 def schedule_fishing_status_check(phone: str):
-    """
-    Schedules a Fishing status trigger after a successful Fishing button click.
-    """
     try:
         delay = setting_int("FISHING_STATUS_CHECK_DELAY", 300)
         delay = max(0, int(delay))
@@ -358,13 +343,277 @@ def schedule_fishing_status_check(phone: str):
 
 
 # ============================================================
+# Backup-group tracking (میوهام / انتقال)
+# ============================================================
+
+def _track_backup_message(phone, chat_id, message_id):
+    phone_map = BACKUP_TRACKED_MESSAGES.setdefault(phone, {})
+    ids = phone_map.setdefault(chat_id, set())
+    ids.add(message_id)
+
+    if len(ids) > 200:
+        ids.clear()
+        ids.add(message_id)
+
+
+def _int_clean(value):
+    try:
+        return int(str(value).replace(",", "").strip())
+    except Exception:
+        return None
+
+
+def parse_profile_text(text):
+    """
+    Parses the bot profile response (reply to میوهام).
+    Works with both text and caption messages.
+    """
+    if not text:
+        return None
+
+    t = normalize_text(text)
+
+    if "میو پوینت" not in t:
+        return None
+
+    profile = {}
+
+    m = PROFILE_NAME_RE.search(t)
+    if m:
+        name = m.group(1).strip()
+        if name:
+            profile["account_name"] = name
+
+    m = PROFILE_BALANCE_RE.search(t)
+    if m:
+        profile["balance"] = _int_clean(m.group(1)) or 0
+
+    m = PROFILE_MEOW_RE.search(t)
+    if m:
+        profile["meow_count"] = _int_clean(m.group(1)) or 0
+
+    m = PROFILE_CATS_RE.search(t)
+    if m:
+        profile["street_cats"] = _int_clean(m.group(1)) or 0
+
+    ranks = PROFILE_RANK_RE.findall(t)
+
+    if len(ranks) >= 1:
+        profile["balance_rank"] = _int_clean(ranks[0]) or 0
+    if len(ranks) >= 2:
+        profile["meow_rank"] = _int_clean(ranks[1]) or 0
+    if len(ranks) >= 3:
+        profile["street_cats_rank"] = _int_clean(ranks[2]) or 0
+
+    m = PROFILE_LEVEL_RE.search(t)
+    if m:
+        profile["level"] = _int_clean(m.group(1)) or 0
+        profile["level_progress"] = f"{m.group(2).replace(',', '')} / {m.group(3).replace(',', '')}"
+
+    return profile
+
+
+async def _wait_for_bot_reply(client, chat_id, sent_id, timeout=20):
+    loop = asyncio.get_running_loop()
+    future = loop.create_future()
+
+    async def _handler(_, message):
+        try:
+            if getattr(message, "reply_to_message_id", None) == sent_id and not future.done():
+                future.set_result(message)
+        except Exception:
+            pass
+
+    handler = MessageHandler(
+        _handler,
+        filters.chat(chat_id) & filters.user(BOT_USER_ID)
+    )
+
+    client.add_handler(handler, group=-10)
+
+    try:
+        return await asyncio.wait_for(future, timeout=timeout)
+    except asyncio.TimeoutError:
+        return None
+    finally:
+        try:
+            client.remove_handler(handler, group=-10)
+        except Exception:
+            pass
+
+
+async def _ensure_in_backup(client, phone, chat_id):
+    try:
+        await client.get_chat_member(chat_id, "me")
+        update_account_meta(phone, in_backup_group=1)
+        return True
+    except Exception:
+        update_account_meta(phone, in_backup_group=0)
+        return False
+
+
+async def _job_name_and_backup(client, phone, backup_group_id):
+    result = {"name": None, "in_backup": None}
+
+    try:
+        me = await client.get_me()
+        name = (getattr(me, "first_name", None) or getattr(me, "username", None) or "").strip()
+        if name:
+            result["name"] = name
+    except Exception as e:
+        print(f"❌ get_me error [{phone}]: {e}")
+
+    if backup_group_id:
+        try:
+            await client.get_chat_member(int(backup_group_id), "me")
+            result["in_backup"] = 1
+        except Exception:
+            result["in_backup"] = 0
+
+    return result
+
+
+async def _job_fetch_profile(client, phone, backup_group_id):
+    chat_id = int(backup_group_id)
+
+    if not await _ensure_in_backup(client, phone, chat_id):
+        print(f"⚠️ [{phone}] Not in backup group, profile skipped")
+        return None
+
+    sent = await client.send_message(chat_id, "میوهام")
+    _track_backup_message(phone, chat_id, sent.id)
+
+    timeout = setting_int("PROFILE_FETCH_TIMEOUT", 20)
+    reply = await _wait_for_bot_reply(client, chat_id, sent.id, timeout=timeout)
+
+    if not reply:
+        print(f"⚠️ [{phone}] میوهام reply timeout")
+        return None
+
+    profile = parse_profile_text(reply.text or reply.caption or "")
+
+    if profile:
+        update_account_profile(phone, **profile)
+        print(f"🍬 [{phone}] Profile updated: balance={profile.get('balance')}")
+
+    return profile
+
+
+async def _job_transfer(client, phone, backup_group_id, target_user_id):
+    chat_id = int(backup_group_id)
+
+    profile = await _job_fetch_profile(client, phone, backup_group_id)
+
+    balance = (profile or {}).get("balance") or 0
+
+    if balance <= 0:
+        print(f"⚠️ [{phone}] Transfer skipped: balance={balance}")
+        return {"phone": phone, "status": "skipped", "amount": 0}
+
+    # 1-3 seconds delay between commands
+    await asyncio.sleep(random.uniform(1.0, 3.0))
+
+    command = f"انتقال میویی {balance} {target_user_id}"
+    sent = await client.send_message(chat_id, command)
+    _track_backup_message(phone, chat_id, sent.id)
+
+    print(f"💸 [{phone}] Transfer command sent: {command}")
+
+    return {"phone": phone, "status": "ok", "amount": balance}
+
+
+async def update_status_for_user(user_id):
+    """
+    Updates account names + backup group membership for all accounts of a user.
+    """
+    user = get_web_user_by_id(user_id)
+    backup_group_id = (user or {}).get("backup_group_id") or ""
+
+    accounts = get_tg_accounts_for_user(user_id)
+
+    for acc in accounts:
+        phone = acc["phone"]
+
+        try:
+            result = await session_manager.run_with_client(
+                phone,
+                lambda client: _job_name_and_backup(client, phone, backup_group_id)
+            )
+
+            update_account_meta(
+                phone,
+                account_name=result.get("name"),
+                in_backup_group=result.get("in_backup")
+            )
+
+            print(f"🔄 [{phone}] status updated: name={result.get('name')} in_backup={result.get('in_backup')}")
+
+        except Exception as e:
+            print(f"❌ update_status error [{phone}]: {e}")
+
+        await asyncio.sleep(random.uniform(1.0, 2.0))
+
+
+async def update_profiles_for_user(user_id):
+    """
+    Fetches میوهام profile (balance etc.) for all accounts of a user.
+    """
+    user = get_web_user_by_id(user_id)
+    backup_group_id = (user or {}).get("backup_group_id") or ""
+
+    if not backup_group_id:
+        print("⚠️ update_profiles: no backup group set")
+        return
+
+    accounts = get_tg_accounts_for_user(user_id)
+
+    for acc in accounts:
+        phone = acc["phone"]
+
+        try:
+            await session_manager.run_with_client(
+                phone,
+                lambda client: _job_fetch_profile(client, phone, backup_group_id)
+            )
+        except Exception as e:
+            print(f"❌ update_profiles error [{phone}]: {e}")
+            update_account_meta(phone, in_backup_group=0)
+
+        await asyncio.sleep(random.uniform(1.0, 3.0))
+
+
+async def transfer_for_user(user_id, target_user_id):
+    """
+    Makes every account transfer its whole balance to target_user_id.
+    """
+    user = get_web_user_by_id(user_id)
+    backup_group_id = (user or {}).get("backup_group_id") or ""
+
+    if not backup_group_id:
+        print("⚠️ transfer: no backup group set")
+        return
+
+    accounts = get_tg_accounts_for_user(user_id)
+
+    for acc in accounts:
+        phone = acc["phone"]
+
+        try:
+            await session_manager.run_with_client(
+                phone,
+                lambda client: _job_transfer(client, phone, backup_group_id, target_user_id)
+            )
+        except Exception as e:
+            print(f"❌ transfer error [{phone}]: {e}")
+
+        await asyncio.sleep(random.uniform(1.0, 3.0))
+
+
+# ============================================================
 # Button helpers
 # ============================================================
 
 async def click_inline_button(message, button, row_index, col_index):
-    """
-    Clicks a button safely with configurable retries.
-    """
     max_retries = setting_int("BUTTON_CLICK_MAX_RETRIES", 10)
     max_retries = max(1, int(max_retries))
 
@@ -375,14 +624,12 @@ async def click_inline_button(message, button, row_index, col_index):
     last_error = None
 
     for attempt in range(1, max_retries + 1):
-        # Preferred: click by callback_data
         if callback_data:
             try:
                 await message.click(callback_data=callback_data)
                 return True
 
             except TypeError:
-                # Older fork/version may not support callback_data keyword
                 callback_data = None
 
             except Exception as e:
@@ -390,7 +637,6 @@ async def click_inline_button(message, button, row_index, col_index):
                 error_text = str(e).lower()
 
                 if "doesn't exist" in error_text:
-                    # Fall back to coordinates
                     callback_data = None
                 else:
                     if attempt < max_retries:
@@ -400,9 +646,7 @@ async def click_inline_button(message, button, row_index, col_index):
 
                     break
 
-        # Fallback: click by coordinates
         try:
-            # Pyrogram/Kurigram normally expects x=column, y=row
             await message.click(col_index, row_index)
             return True
 
@@ -412,7 +656,6 @@ async def click_inline_button(message, button, row_index, col_index):
 
             if "doesn't exist" in error_text:
                 try:
-                    # Fallback for forks expecting row,column
                     await message.click(row_index, col_index)
                     return True
                 except Exception as e2:
@@ -431,9 +674,6 @@ async def click_inline_button(message, button, row_index, col_index):
 
 
 async def click_meow_claim_buttons(message):
-    """
-    Clicks Meow claim buttons only.
-    """
     try:
         reply_markup = getattr(message, "reply_markup", None)
         if not reply_markup:
@@ -491,7 +731,6 @@ async def delayed_click_fishing(client, phone, message, msg_key: str):
         except:
             fresh_message = message
 
-        # STRICT REQUIREMENT: callback_data MUST contain "feed_cat"
         fishing_btn = optimizations.find_fishing_button(fresh_message)
         if fishing_btn:
             success = await click_inline_button(
@@ -504,7 +743,6 @@ async def delayed_click_fishing(client, phone, message, msg_key: str):
                 _remember_clicked(CLICKED_FISHING_MESSAGES, msg_key)
                 print(f"🎣 [{msg_key}] Clicked fishing button (feed_cat)")
 
-                # Always schedule a Fishing status check after successful click
                 schedule_fishing_status_check(phone)
 
     except asyncio.CancelledError:
@@ -535,7 +773,6 @@ async def delayed_click_pishi(client, message, msg_key: str):
         except:
             fresh_message = message
 
-        # STRICT REQUIREMENT: callback_data MUST contain "collect_cat"
         pishi_btn = optimizations.find_pishi_button(fresh_message)
         if pishi_btn:
             success = await click_inline_button(
@@ -596,9 +833,6 @@ async def delayed_click_meow(client, message, msg_key: str):
 # ============================================================
 
 async def send_fishing_probe(client, phone: str, chat_ids, reason: str):
-    """
-    Sends a Fishing trigger only to check/parse the next cooldown.
-    """
     print(f"🎣 [{phone}] Fishing status probe: {reason}")
 
     for chat_id in chat_ids:
@@ -629,17 +863,12 @@ async def send_fishing_probe(client, phone: str, chat_ids, reason: str):
 # ============================================================
 
 async def is_reply_to_self(client, message, self_id):
-    """
-    Returns True only if the message is a reply to a message
-    sent by this account's own Telegram user ID.
-    """
     reply_to_message_id = getattr(message, "reply_to_message_id", None)
     replied_message = getattr(message, "reply_to_message", None)
 
     if not reply_to_message_id and not replied_message:
         return False
 
-    # Fast path: Pyrogram already included the replied message
     if replied_message:
         sender = getattr(replied_message, "from_user", None)
 
@@ -690,14 +919,14 @@ async def handle_bot_message(client, phone: str, message):
         if not user or not user.get("is_active"):
             return
 
-        # STRICT FILTERING: Ignore messages from unselected groups early
         if not optimizations.message_is_from_selected_group(message, user.get("selected_groups", [])):
             return
 
-        # ============================================================
-        # STRICT REQUIREMENT:
-        # The game bot message must be a reply to this account's own message.
-        # ============================================================
+        # Ignore replies to backup-group commands (میوهام / انتقال)
+        tracked_backup = BACKUP_TRACKED_MESSAGES.get(phone, {}).get(message.chat.id)
+        if tracked_backup and getattr(message, "reply_to_message_id", None) in tracked_backup:
+            return
+
         self_id = ACCOUNT_SELF_IDS.get(phone)
 
         if not self_id:
@@ -719,9 +948,6 @@ async def handle_bot_message(client, phone: str, message):
         raw_text = message.text or message.caption or ""
         normalized = normalize_text(raw_text).lower()
 
-        # ============================================================
-        # Dynamic cooldown parsing
-        # ============================================================
         cooldown = parse_cooldown_seconds(raw_text)
         meow_response = user.get("meow_enabled") and is_meow_response(phone, message, normalized)
 
@@ -735,9 +961,6 @@ async def handle_bot_message(client, phone: str, message):
             elif user.get("pishi_enabled") and "پیشی" in normalized and "ماهی" not in normalized:
                 schedule_feature(phone, "pishi", cooldown)
 
-        # ============================================================
-        # Fishing reply / edited reply
-        # ============================================================
         if user.get("fishing_enabled") and getattr(message, "reply_to_message_id", None):
             tracked_fishing_id = TRACKED_FISHING_MESSAGES.get(phone, {}).get(message.chat.id)
 
@@ -758,11 +981,6 @@ async def handle_bot_message(client, phone: str, message):
                             delayed_click_fishing(client, phone, message, msg_key)
                         )
 
-        # ============================================================
-        # Meow claim button
-        # If Pishi is enabled, Pishi handles generic claim clicks.
-        # If Pishi is disabled, Meow handles its own claim clicks.
-        # ============================================================
         if meow_response and not user.get("pishi_enabled"):
             reply_markup = getattr(message, "reply_markup", None)
             inline_keyboard = getattr(reply_markup, "inline_keyboard", None) if reply_markup else None
@@ -780,10 +998,6 @@ async def handle_bot_message(client, phone: str, message):
                         delayed_click_meow(client, message, meow_msg_key)
                     )
 
-        # ============================================================
-        # Pishi claim buttons
-        # Click each unique message only once
-        # ============================================================
         if user.get("pishi_enabled"):
             is_fishing_message = "ماهی" in normalized or "ماهیا" in normalized
 
@@ -858,9 +1072,6 @@ async def smart_scheduler_loop(client, phone: str):
 
             now = int(time.time())
 
-            # ============================================================
-            # Meow — dynamic parsed timing only
-            # ============================================================
             if account.get("meow_enabled"):
                 action = dynamic_action(account, "meow", now)
 
@@ -914,9 +1125,6 @@ async def smart_scheduler_loop(client, phone: str):
 
                             await asyncio.sleep(random.uniform(1.0, 3.0))
 
-            # ============================================================
-            # Pishi — interval based
-            # ============================================================
             if account.get("pishi_enabled") and now >= int(float(account.get("pishi_next_run") or 0)):
                 interval = setting_int("PISHI_INTERVAL_SECONDS", 1800)
 
@@ -952,17 +1160,11 @@ async def smart_scheduler_loop(client, phone: str):
 
                         await asyncio.sleep(random.uniform(1.0, 3.0))
 
-            # ============================================================
-            # Fishing — dynamic parsed timing + status checks
-            # ============================================================
             fishing_sent_this_cycle = False
 
             if account.get("fishing_enabled"):
                 fishing_next_run = int(float(account.get("fishing_next_run") or 0))
 
-                # --------------------------------------------------------
-                # 1. Normal initial/due Fishing trigger
-                # --------------------------------------------------------
                 action = None
 
                 if fishing_next_run == 0:
@@ -985,7 +1187,6 @@ async def smart_scheduler_loop(client, phone: str):
                     if not claimed:
                         print(f"⚠️ [{phone}] Fishing trigger skipped: already claimed or state changed")
                     else:
-                        # Clear any old post-click status check because we are starting a fresh attempt
                         try:
                             update_fishing_status_check_at(phone, 0)
                         except:
@@ -1010,7 +1211,7 @@ async def smart_scheduler_loop(client, phone: str):
                             except FloodWait as e:
                                 wait_seconds = flood_seconds(e)
                                 schedule_feature(phone, "fishing", wait_seconds, jitter=20)
-                                print(f"⏳ FloodWait Fishing [{phone}]: {wait_seconds}s")
+                                print(f"⏳ FloodWait Fishing probe [{phone}]: {wait_seconds}s")
                                 break
 
                             except Exception as e:
@@ -1021,9 +1222,6 @@ async def smart_scheduler_loop(client, phone: str):
 
                         fishing_sent_this_cycle = True
 
-                # --------------------------------------------------------
-                # 2. Post-click status check
-                # --------------------------------------------------------
                 if not fishing_sent_this_cycle:
                     status_check_at = int(float(account.get("fishing_status_check_at") or 0))
 
@@ -1040,9 +1238,6 @@ async def smart_scheduler_loop(client, phone: str):
 
                             fishing_sent_this_cycle = True
 
-                # --------------------------------------------------------
-                # 3. Periodic parsed-time availability check
-                # --------------------------------------------------------
                 if not fishing_sent_this_cycle:
                     periodic_interval = setting_int("FISHING_TIME_CHECK_INTERVAL", 900)
                     periodic_interval = max(60, int(periodic_interval))
@@ -1160,6 +1355,17 @@ async def _start_worker(phone: str):
 
             ACCOUNT_SELF_IDS[phone] = self_user.id
 
+            # Save the account name only once (when missing in DB)
+            if not account.get("account_name"):
+                name = (
+                    getattr(self_user, "first_name", None)
+                    or getattr(self_user, "username", None)
+                    or ""
+                ).strip()
+
+                if name:
+                    update_account_meta(phone, account_name=name)
+
         except Exception as e:
             print(f"❌ Could not get self ID for {phone}: {e}")
 
@@ -1229,7 +1435,6 @@ async def _stop_worker(phone: str):
         pass
 
     try:
-        # Forcefully stop and remove client from memory
         await session_manager.stop_and_cleanup_client(phone)
     except Exception as e:
         print(f"❌ stop_and_cleanup_client error [{phone}]: {e}")

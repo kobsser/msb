@@ -284,6 +284,17 @@ async def get_groups_managed(phone: str):
     return await run_with_client(phone, job)
 
 
+async def get_me_name(phone: str):
+    """
+    Returns the Telegram display name for this account (checked once when missing).
+    """
+    async def job(client):
+        me = await client.get_me()
+        return (getattr(me, "first_name", None) or getattr(me, "username", None) or "").strip()
+
+    return await run_with_client(phone, job)
+
+
 async def stop_all_clients():
     """
     Force stops all shared clients.

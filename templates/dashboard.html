@@ -1,9 +1,57 @@
 {% extends "base.html" %}
 {% block title %}داشبورد{% endblock %}
 {% block content %}
-<div class="flex justify-between items-center mb-6">
+<div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
     <h2 class="text-2xl font-bold">اکانت‌های من</h2>
     <a href="{{ url_for('add_account') }}" class="btn btn-primary">+ افزودن اکانت جدید</a>
+</div>
+
+<!-- Global tools -->
+<div class="card bg-base-100 shadow-xl mb-6">
+    <div class="card-body gap-4">
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <!-- Backup group -->
+            <form method="POST" action="{{ url_for('save_backup_group') }}" data-loading class="flex flex-col gap-2">
+                <label class="label p-0">
+                    <span class="label-text font-bold">گروه بکاپ (آیدی عددی)</span>
+                </label>
+                <div class="join w-full">
+                    <input type="text" name="backup_group_id" dir="ltr" placeholder="-100123456789"
+                        value="{{ backup_group_id or '' }}" class="input input-bordered join-item w-full" />
+                    <button type="submit" class="btn btn-primary join-item">ذخیره</button>
+                </div>
+                <span class="label-text-alt opacity-60">این گروه فقط برای قابلیت‌های ویژه استفاده می‌شود.</span>
+            </form>
+
+            <!-- Update buttons -->
+            <div class="flex flex-col gap-2">
+                <span class="label-text font-bold">بروزرسانی اطلاعات</span>
+                <div class="flex gap-2">
+                    <form method="POST" action="{{ url_for('update_status') }}" data-loading class="flex-1">
+                        <button type="submit" class="btn btn-outline btn-secondary w-full">🔄 آپدیت</button>
+                    </form>
+                    <form method="POST" action="{{ url_for('update_profiles') }}" data-loading class="flex-1">
+                        <button type="submit" class="btn btn-outline btn-info w-full">🍬 میوهام</button>
+                    </form>
+                </div>
+                <span class="label-text-alt opacity-60">«آپدیت»: نام + عضویت گروه بکاپ | «میوهام»: موجودی + آمار</span>
+            </div>
+
+            <!-- Transfer -->
+            <form method="POST" action="{{ url_for('transfer') }}" data-loading class="flex flex-col gap-2">
+                <label class="label p-0">
+                    <span class="label-text font-bold">انتقال موجودی به کاربر</span>
+                </label>
+                <div class="join w-full">
+                    <input type="text" name="target_user_id" dir="ltr" placeholder="12345678"
+                        class="input input-bordered join-item w-full" required />
+                    <button type="submit" class="btn btn-warning join-item"
+                        onclick="return confirm('تمام موجودی همه اکانت‌های عضو گروه بکاپ منتقل شود؟');">انتقال</button>
+                </div>
+                <span class="label-text-alt opacity-60">کل موجودی همه اکانت‌های عضو گروه بکاپ به آیدی واردشده منتقل می‌شود.</span>
+            </form>
+        </div>
+    </div>
 </div>
 
 {% if accounts %}
@@ -11,25 +59,48 @@
     {% for acc in accounts %}
     <div class="card bg-base-100 shadow-xl">
         <div class="card-body">
-            <h2 class="card-title flex items-center gap-2">
-                📱 {{ acc.phone }}
+            <h2 class="card-title text-lg">
+                {{ acc.account_name or '📱 بدون نام' }}
             </h2>
-            <div class="flex flex-wrap gap-2 mt-2">
-                <div class="badge {% if acc.is_active %}badge-success{% else %}badge-ghost{% endif %} gap-2">
-                    {% if acc.is_active %}🟢 فعال{% else %}⚪ غیرفعال{% endif %}
-                </div>
-                <div class="badge badge-info gap-2">
-                    میو: {{ 'روشن' if acc.meow_enabled else 'خاموش' }}
-                </div>
-                <div class="badge badge-warning text-neutral gap-2">
-                    پیشی: {{ 'روشن' if acc.pishi_enabled else 'خاموش' }}
-                </div>
-                <div class="badge badge-primary gap-2">
-                    ماهی: {{ 'روشن' if acc.fishing_enabled else 'خاموش' }}
-                </div>
+            <div class="text-sm opacity-70 -mt-2" dir="ltr">{{ acc.phone }}</div>
+
+            <div class="flex flex-wrap gap-1 mt-2">
+                {% if acc.is_active %}
+                <span class="badge badge-success">🟢 فعال</span>
+                {% else %}
+                <span class="badge badge-ghost">⚪ غیرفعال</span>
+                {% endif %}
+
+                {% if acc.in_backup_group == 1 %}
+                <span class="badge badge-success">گروه بکاپ: عضو ✔</span>
+                {% elif acc.in_backup_group == 0 %}
+                <span class="badge badge-error">گروه بکاپ: عضو نیست ✖</span>
+                {% else %}
+                <span class="badge badge-ghost">گروه بکاپ: بررسی نشده</span>
+                {% endif %}
             </div>
 
-            <p class="text-sm text-base-content/70 mt-2">
+            <div class="flex flex-wrap gap-1 mt-1">
+                <span class="badge badge-info">💰 {{ "{:,}".format(acc.balance or 0) }}</span>
+                <span class="badge badge-primary">⭐️ سطح {{ acc.level or 0 }}</span>
+                <span class="badge badge-secondary">🐾 {{ acc.meow_count or 0 }}</span>
+                <span class="badge badge-accent">🐈 {{ acc.street_cats or 0 }}</span>
+            </div>
+
+            <p class="text-xs opacity-60 mt-1">
+                رتبه‌ها: 💰 {{ "{:,}".format(acc.balance_rank or 0) }} |
+                🐾 {{ "{:,}".format(acc.meow_rank or 0) }} |
+                🐈 {{ "{:,}".format(acc.street_cats_rank or 0) }}
+                {% if acc.level_progress %} | ⭐️ {{ acc.level_progress }} {% endif %}
+            </p>
+
+            <div class="flex flex-wrap gap-1 mt-1">
+                <span class="badge badge-info gap-1">میو: {{ 'روشن' if acc.meow_enabled else 'خاموش' }}</span>
+                <span class="badge badge-warning text-neutral gap-1">پیشی: {{ 'روشن' if acc.pishi_enabled else 'خاموش' }}</span>
+                <span class="badge badge-primary gap-1">ماهی: {{ 'روشن' if acc.fishing_enabled else 'خاموش' }}</span>
+            </div>
+
+            <p class="text-sm text-base-content/70 mt-1">
                 گروه‌ها: {{ acc.selected_groups | length }} انتخاب شده
             </p>
 

@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import threading
 from contextlib import contextmanager
 
@@ -47,6 +48,9 @@ DEFAULT_SETTINGS = {
     # ms = 4:30 means 4 minutes 30 seconds
     # hm = 4:30 means 4 hours 30 minutes
     "TWO_PART_TIME_MODE": "ms",
+
+    # Profile fetch (میوهام) reply timeout
+    "PROFILE_FETCH_TIMEOUT": "20",
 }
 
 
@@ -122,6 +126,7 @@ def init_db():
                 username TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
                 is_admin INTEGER DEFAULT 0,
+                backup_group_id TEXT DEFAULT '',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -169,6 +174,13 @@ def init_db():
             BEGIN
                 IF NOT EXISTS (
                     SELECT 1 FROM information_schema.columns
+                    WHERE table_name='web_users' AND column_name='backup_group_id'
+                ) THEN
+                    ALTER TABLE web_users ADD COLUMN backup_group_id TEXT DEFAULT '';
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
                     WHERE table_name='tg_accounts' AND column_name='pishi_enabled'
                 ) THEN
                     ALTER TABLE tg_accounts ADD COLUMN pishi_enabled INTEGER DEFAULT 0;
@@ -214,6 +226,83 @@ def init_db():
                     WHERE table_name='tg_accounts' AND column_name='fishing_periodic_check_at'
                 ) THEN
                     ALTER TABLE tg_accounts ADD COLUMN fishing_periodic_check_at BIGINT DEFAULT 0;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='account_name'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN account_name TEXT DEFAULT '';
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='in_backup_group'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN in_backup_group INTEGER DEFAULT -1;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='balance'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN balance BIGINT DEFAULT 0;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='balance_rank'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN balance_rank BIGINT DEFAULT 0;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='meow_count'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN meow_count BIGINT DEFAULT 0;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='meow_rank'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN meow_rank BIGINT DEFAULT 0;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='street_cats'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN street_cats BIGINT DEFAULT 0;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='street_cats_rank'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN street_cats_rank BIGINT DEFAULT 0;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='level'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN level INTEGER DEFAULT 0;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='level_progress'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN level_progress TEXT DEFAULT '';
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='profile_updated_at'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN profile_updated_at BIGINT DEFAULT 0;
                 END IF;
             END $$;
         """)
@@ -404,6 +493,22 @@ def get_web_user(username):
     return dict(row) if row else None
 
 
+def get_web_user_by_id(user_id):
+    with get_db_cursor(dict_cursor=True) as cur:
+        cur.execute("SELECT * FROM web_users WHERE id = %s", (user_id,))
+        row = cur.fetchone()
+
+    return dict(row) if row else None
+
+
+def set_backup_group_id(user_id, group_id):
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            "UPDATE web_users SET backup_group_id = %s WHERE id = %s",
+            (str(group_id or ""), user_id)
+        )
+
+
 def verify_web_user(username, password):
     user = get_web_user(username)
 
@@ -500,6 +605,24 @@ def _row_to_account(row):
 
     acc["fishing_status_check_at"] = int(float(acc.get("fishing_status_check_at") or 0))
     acc["fishing_periodic_check_at"] = int(float(acc.get("fishing_periodic_check_at") or 0))
+
+    # New profile / backup fields
+    acc["account_name"] = acc.get("account_name") or ""
+
+    try:
+        acc["in_backup_group"] = int(acc.get("in_backup_group"))
+    except Exception:
+        acc["in_backup_group"] = -1
+
+    acc["balance"] = int(float(acc.get("balance") or 0))
+    acc["balance_rank"] = int(float(acc.get("balance_rank") or 0))
+    acc["meow_count"] = int(float(acc.get("meow_count") or 0))
+    acc["meow_rank"] = int(float(acc.get("meow_rank") or 0))
+    acc["street_cats"] = int(float(acc.get("street_cats") or 0))
+    acc["street_cats_rank"] = int(float(acc.get("street_cats_rank") or 0))
+    acc["level"] = int(float(acc.get("level") or 0))
+    acc["level_progress"] = acc.get("level_progress") or ""
+    acc["profile_updated_at"] = int(float(acc.get("profile_updated_at") or 0))
 
     # Compatibility alias
     acc["fish_enabled"] = acc["pishi_enabled"]
@@ -652,6 +775,65 @@ def update_account_next_run(
         )
 
 
+def update_account_meta(phone, account_name=None, in_backup_group=None):
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            UPDATE tg_accounts
+            SET
+                account_name = COALESCE(%s, account_name),
+                in_backup_group = COALESCE(%s, in_backup_group)
+            WHERE phone = %s
+            """,
+            (account_name, in_backup_group, str(phone))
+        )
+
+
+def update_account_profile(
+    phone,
+    account_name=None,
+    balance=None,
+    balance_rank=None,
+    meow_count=None,
+    meow_rank=None,
+    street_cats=None,
+    street_cats_rank=None,
+    level=None,
+    level_progress=None
+):
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            UPDATE tg_accounts
+            SET
+                account_name = COALESCE(%s, account_name),
+                balance = COALESCE(%s, balance),
+                balance_rank = COALESCE(%s, balance_rank),
+                meow_count = COALESCE(%s, meow_count),
+                meow_rank = COALESCE(%s, meow_rank),
+                street_cats = COALESCE(%s, street_cats),
+                street_cats_rank = COALESCE(%s, street_cats_rank),
+                level = COALESCE(%s, level),
+                level_progress = COALESCE(%s, level_progress),
+                profile_updated_at = %s
+            WHERE phone = %s
+            """,
+            (
+                account_name,
+                balance,
+                balance_rank,
+                meow_count,
+                meow_rank,
+                street_cats,
+                street_cats_rank,
+                level,
+                level_progress,
+                int(time.time()),
+                str(phone)
+            )
+        )
+
+
 # ============================================================
 # Atomic trigger claims
 # ============================================================
@@ -664,16 +846,6 @@ def claim_dynamic_feature(
     now,
     timeout=0
 ):
-    """
-    Atomically claims a dynamic feature trigger.
-
-    Modes:
-      send_initial
-      send_due
-      retry_after_parse_timeout
-
-    Returns True only if this process/task successfully claimed the trigger.
-    """
     columns = {
         "meow": "meow_next_run",
         "fishing": "fishing_next_run",
@@ -740,9 +912,6 @@ def claim_dynamic_feature(
 
 
 def claim_interval_feature(phone, feature, scheduled_timestamp, now):
-    """
-    Atomically claims interval-based features like Pishi.
-    """
     columns = {
         "pishi": "pishi_next_run",
     }
@@ -792,9 +961,6 @@ def update_fishing_status_check_at(phone, timestamp):
 
 
 def claim_fishing_status_check(phone, now):
-    """
-    Atomically claims a scheduled post-click Fishing status check.
-    """
     with get_db_cursor(commit=True) as cur:
         cur.execute(
             """
@@ -812,9 +978,6 @@ def claim_fishing_status_check(phone, now):
 
 
 def claim_fishing_periodic_check(phone, next_check_at, now):
-    """
-    Atomically claims the periodic Fishing time availability check.
-    """
     with get_db_cursor(commit=True) as cur:
         cur.execute(
             """
