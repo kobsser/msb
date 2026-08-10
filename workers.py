@@ -57,6 +57,9 @@ MEOW_CLICK_TASKS = {}
 ACCOUNT_SELF_IDS = {}
 REPLY_OWNER_CACHE = {}
 
+TRANSFER_CONFIRM_PREFIX = "tr_confirm"
+TRANSFER_SUCCESS_TOKEN = "موفقیت"
+
 FA_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789")
 
 COOLDOWN_RE = re.compile(
@@ -442,6 +445,108 @@ async def _wait_for_bot_reply(client, chat_id, sent_id, timeout=20):
             pass
 
 
+def _find_transfer_confirm_button(message):
+    """
+    Finds the transfer confirmation button.
+    Its callback_data MUST start with "tr_confirm".
+    """
+    reply_markup = getattr(message, "reply_markup", None)
+    if not reply_markup:
+        return None
+
+    rows = getattr(reply_markup, "inline_keyboard", None)
+    if not rows:
+        return None
+
+    for row_index, row in enumerate(rows):
+        if not row:
+            continue
+
+        for col_index, button in enumerate(row):
+            callback_data = optimizations.normalize_callback_data(
+                getattr(button, "callback_data", None)
+            )
+
+            if callback_data.startswith(TRANSFER_CONFIRM_PREFIX):
+                button._row_index = row_index
+                button._col_index = col_index
+                return button
+
+    return None
+
+
+async def _click_button_once(message, button):
+    """
+    Clicks a button once, with coordinate fallback.
+    Retries are handled by the transfer confirmation loop.
+    """
+    callback_data = getattr(button, "callback_data", None)
+
+    if callback_data:
+        try:
+            await message.click(callback_data=callback_data)
+            return True
+
+        except TypeError:
+            callback_data = None
+
+        except Exception as e:
+            error_text = str(e).lower()
+
+            if "doesn't exist" not in error_text:
+                print(f"⚠️ Transfer confirm click error: {e}")
+
+    try:
+        await message.click(
+            getattr(button, "_col_index", 0),
+            getattr(button, "_row_index", 0)
+        )
+        return True
+
+    except Exception:
+        try:
+            await message.click(
+                getattr(button, "_row_index", 0),
+                getattr(button, "_col_index", 0)
+            )
+            return True
+
+        except Exception as e:
+            print(f"❌ Transfer confirm click failed: {e}")
+            return False
+
+
+def _watch_confirmation_edit(client, chat_id, confirmation_message_id):
+    """
+    Watches for the confirmation message to be edited
+    with a message containing "موفقیت".
+    """
+    loop = asyncio.get_running_loop()
+    future = loop.create_future()
+
+    async def _handler(_, edited_message):
+        try:
+            if getattr(edited_message, "id", None) != confirmation_message_id:
+                return
+
+            raw_text = edited_message.text or edited_message.caption or ""
+
+            if TRANSFER_SUCCESS_TOKEN in normalize_text(raw_text) and not future.done():
+                future.set_result(edited_message)
+
+        except Exception:
+            pass
+
+    handler = EditedMessageHandler(
+        _handler,
+        filters.chat(chat_id) & filters.user(BOT_USER_ID)
+    )
+
+    client.add_handler(handler, group=-11)
+
+    return future, handler
+
+
 async def _ensure_in_backup(client, phone, chat_id):
     try:
         await client.get_chat_member(chat_id, "me")
@@ -510,7 +615,7 @@ async def _job_transfer(client, phone, backup_group_id, target_user_id):
         print(f"⚠️ [{phone}] Transfer skipped: balance={balance}")
         return {"phone": phone, "status": "skipped", "amount": 0}
 
-    # 1-3 seconds delay between commands
+    # Delay between میوهام and انتقال command
     await asyncio.sleep(random.uniform(1.0, 3.0))
 
     command = f"انتقال میویی {balance} {target_user_id}"
@@ -519,8 +624,107 @@ async def _job_transfer(client, phone, backup_group_id, target_user_id):
 
     print(f"💸 [{phone}] Transfer command sent: {command}")
 
-    return {"phone": phone, "status": "ok", "amount": balance}
+    confirm_timeout = setting_int("TRANSFER_CONFIRM_TIMEOUT", 30)
 
+    confirmation = await _wait_for_bot_reply(
+        client,
+        chat_id,
+        sent.id,
+        timeout=confirm_timeout
+    )
+
+    if not confirmation:
+        print(f"❌ [{phone}] Transfer confirmation message not received")
+        return {"phone": phone, "status": "no_confirmation", "amount": balance}
+
+    # Prevent normal worker handlers from reacting to confirmation messages
+    _track_backup_message(phone, chat_id, confirmation.id)
+
+    raw_text = confirmation.text or confirmation.caption or ""
+
+    # If it is already successful, no need to click
+    if TRANSFER_SUCCESS_TOKEN in normalize_text(raw_text):
+        print(f"✅ [{phone}] Transfer already confirmed")
+        return {"phone": phone, "status": "confirmed", "amount": balance}
+
+    confirm_button = _find_transfer_confirm_button(confirmation)
+
+    if not confirm_button:
+        print(f"❌ [{phone}] No tr_confirm button found")
+        return {"phone": phone, "status": "no_confirm_button", "amount": balance}
+
+    max_attempts = max(1, setting_int("TRANSFER_CONFIRM_MAX_RETRIES", 3))
+    edit_timeout = setting_int("TRANSFER_CONFIRM_EDIT_TIMEOUT", 20)
+
+    for attempt in range(1, max_attempts + 1):
+        # Respect delay before each confirmation click/retry
+        await asyncio.sleep(random.uniform(1.0, 3.0))
+
+        future, handler = _watch_confirmation_edit(
+            client,
+            chat_id,
+            confirmation.id
+        )
+
+        clicked = False
+
+        try:
+            clicked = await _click_button_once(confirmation, confirm_button)
+
+            if clicked:
+                try:
+                    edited_message = await asyncio.wait_for(
+                        future,
+                        timeout=edit_timeout
+                    )
+
+                    if edited_message:
+                        print(f"✅ [{phone}] Transfer confirmed after attempt {attempt}")
+                        return {"phone": phone, "status": "confirmed", "amount": balance}
+
+                except asyncio.TimeoutError:
+                    print(
+                        f"⚠️ [{phone}] Transfer success edit not detected "
+                        f"(attempt {attempt})"
+                    )
+            else:
+                print(f"⚠️ [{phone}] Confirm button click failed (attempt {attempt})")
+
+        finally:
+            if not future.done():
+                future.cancel()
+
+            try:
+                client.remove_handler(handler, group=-11)
+            except Exception:
+                pass
+
+        # Refresh confirmation message before retrying
+        try:
+            fresh_confirmation = await client.get_messages(
+                chat_id,
+                confirmation.id
+            )
+
+            if fresh_confirmation:
+                confirmation = fresh_confirmation
+
+                raw_text = confirmation.text or confirmation.caption or ""
+
+                if TRANSFER_SUCCESS_TOKEN in normalize_text(raw_text):
+                    print(f"✅ [{phone}] Transfer confirmed after refresh")
+                    return {"phone": phone, "status": "confirmed", "amount": balance}
+
+                fresh_button = _find_transfer_confirm_button(confirmation)
+
+                if fresh_button:
+                    confirm_button = fresh_button
+
+        except Exception as e:
+            print(f"⚠️ [{phone}] Could not refresh confirmation message: {e}")
+
+    print(f"❌ [{phone}] Transfer confirmation failed after {max_attempts} attempts")
+    return {"phone": phone, "status": "confirmation_failed", "amount": balance}
 
 async def update_status_for_user(user_id):
     """

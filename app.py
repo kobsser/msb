@@ -740,6 +740,21 @@ EDITABLE_SETTINGS = [
         "label": "Two-part time mode (ms or hm)",
         "type": "text"
     },
+    {
+        "key": "TRANSFER_CONFIRM_TIMEOUT",
+        "label": "Transfer confirmation message timeout (seconds)",
+        "type": "number"
+    },
+    {
+        "key": "TRANSFER_CONFIRM_EDIT_TIMEOUT",
+        "label": "Transfer success edit timeout (seconds)",
+        "type": "number"
+    },
+    {
+        "key": "TRANSFER_CONFIRM_MAX_RETRIES",
+        "label": "Transfer confirmation max retries",
+        "type": "number"
+    },
 ]
 
 

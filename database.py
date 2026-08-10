@@ -51,6 +51,11 @@ DEFAULT_SETTINGS = {
 
     # Profile fetch (میوهام) reply timeout
     "PROFILE_FETCH_TIMEOUT": "20",
+
+    # Transfer confirmation
+    "TRANSFER_CONFIRM_TIMEOUT": "30",
+    "TRANSFER_CONFIRM_EDIT_TIMEOUT": "20",
+    "TRANSFER_CONFIRM_MAX_RETRIES": "3",
 }
 
 
