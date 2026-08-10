@@ -729,38 +729,58 @@ async def _job_transfer(client, phone, backup_group_id, target_user_id):
 async def update_status_for_user(user_id):
     """
     Updates account names + backup group membership for all accounts of a user.
+    Runs concurrently.
     """
     user = get_web_user_by_id(user_id)
     backup_group_id = (user or {}).get("backup_group_id") or ""
 
     accounts = get_tg_accounts_for_user(user_id)
 
+    if not accounts:
+        return
+
+    concurrency = _get_user_job_concurrency("status")
+
+    print(
+        f"🔄 Updating status for {len(accounts)} accounts "
+        f"(concurrency={concurrency})"
+    )
+
+    jobs = []
+
     for acc in accounts:
         phone = acc["phone"]
 
-        try:
-            result = await session_manager.run_with_client(
-                phone,
-                lambda client: _job_name_and_backup(client, phone, backup_group_id)
-            )
+        async def job(phone=phone):
+            try:
+                result = await session_manager.run_with_client(
+                    phone,
+                    lambda client: _job_name_and_backup(client, phone, backup_group_id)
+                )
 
-            update_account_meta(
-                phone,
-                account_name=result.get("name"),
-                in_backup_group=result.get("in_backup")
-            )
+                update_account_meta(
+                    phone,
+                    account_name=result.get("name"),
+                    in_backup_group=result.get("in_backup")
+                )
 
-            print(f"🔄 [{phone}] status updated: name={result.get('name')} in_backup={result.get('in_backup')}")
+                print(
+                    f"🔄 [{phone}] status updated: "
+                    f"name={result.get('name')} in_backup={result.get('in_backup')}"
+                )
 
-        except Exception as e:
-            print(f"❌ update_status error [{phone}]: {e}")
+            except Exception as e:
+                print(f"❌ update_status error [{phone}]: {e}")
 
-        await asyncio.sleep(random.uniform(1.0, 2.0))
+        jobs.append(job)
+
+    await _run_concurrent_account_jobs(jobs, concurrency)
 
 
 async def update_profiles_for_user(user_id):
     """
     Fetches میوهام profile (balance etc.) for all accounts of a user.
+    Runs concurrently.
     """
     user = get_web_user_by_id(user_id)
     backup_group_id = (user or {}).get("backup_group_id") or ""
@@ -771,24 +791,40 @@ async def update_profiles_for_user(user_id):
 
     accounts = get_tg_accounts_for_user(user_id)
 
+    if not accounts:
+        return
+
+    concurrency = _get_user_job_concurrency("profile")
+
+    print(
+        f"🍬 Updating profiles for {len(accounts)} accounts "
+        f"(concurrency={concurrency})"
+    )
+
+    jobs = []
+
     for acc in accounts:
         phone = acc["phone"]
 
-        try:
-            await session_manager.run_with_client(
-                phone,
-                lambda client: _job_fetch_profile(client, phone, backup_group_id)
-            )
-        except Exception as e:
-            print(f"❌ update_profiles error [{phone}]: {e}")
-            update_account_meta(phone, in_backup_group=0)
+        async def job(phone=phone):
+            try:
+                await session_manager.run_with_client(
+                    phone,
+                    lambda client: _job_fetch_profile(client, phone, backup_group_id)
+                )
 
-        await asyncio.sleep(random.uniform(1.0, 3.0))
+            except Exception as e:
+                print(f"❌ update_profiles error [{phone}]: {e}")
+
+        jobs.append(job)
+
+    await _run_concurrent_account_jobs(jobs, concurrency)
 
 
 async def transfer_for_user(user_id, target_user_id):
     """
     Makes every account transfer its whole balance to target_user_id.
+    Runs concurrently.
     """
     user = get_web_user_by_id(user_id)
     backup_group_id = (user or {}).get("backup_group_id") or ""
@@ -799,18 +835,114 @@ async def transfer_for_user(user_id, target_user_id):
 
     accounts = get_tg_accounts_for_user(user_id)
 
+    if not accounts:
+        return
+
+    concurrency = _get_user_job_concurrency("transfer")
+
+    print(
+        f"💸 Transferring for {len(accounts)} accounts "
+        f"(concurrency={concurrency})"
+    )
+
+    jobs = []
+
     for acc in accounts:
         phone = acc["phone"]
 
-        try:
-            await session_manager.run_with_client(
-                phone,
-                lambda client: _job_transfer(client, phone, backup_group_id, target_user_id)
-            )
-        except Exception as e:
-            print(f"❌ transfer error [{phone}]: {e}")
+        async def job(phone=phone):
+            try:
+                await session_manager.run_with_client(
+                    phone,
+                    lambda client: _job_transfer(
+                        client,
+                        phone,
+                        backup_group_id,
+                        target_user_id
+                    )
+                )
 
-        await asyncio.sleep(random.uniform(1.0, 3.0))
+            except Exception as e:
+                print(f"❌ transfer error [{phone}]: {e}")
+
+        jobs.append(job)
+
+    await _run_concurrent_account_jobs(jobs, concurrency)
+
+def _get_concurrency_override(key, default):
+    """
+    Gets an optional per-feature concurrency override.
+    Empty or 0 means: use default/global value.
+    """
+    try:
+        raw = get_setting(key, "")
+    except Exception:
+        return default
+
+    raw = str(raw or "").strip()
+
+    if not raw:
+        return default
+
+    try:
+        value = int(float(raw))
+    except Exception:
+        return default
+
+    if value <= 0:
+        return default
+
+    return value
+
+
+def _get_user_job_concurrency(job_type: str) -> int:
+    """
+    Returns concurrency for user jobs.
+
+    Global setting:
+      USER_JOB_CONCURRENCY
+
+    Optional per-feature overrides:
+      STATUS_UPDATE_CONCURRENCY
+      PROFILE_UPDATE_CONCURRENCY
+      TRANSFER_CONCURRENCY
+    """
+    default_concurrency = setting_int("USER_JOB_CONCURRENCY", 3)
+    default_concurrency = max(1, int(default_concurrency))
+
+    key = {
+        "status": "STATUS_UPDATE_CONCURRENCY",
+        "profile": "PROFILE_UPDATE_CONCURRENCY",
+        "transfer": "TRANSFER_CONCURRENCY",
+    }.get(job_type)
+
+    if not key:
+        return default_concurrency
+
+    return max(1, _get_concurrency_override(key, default_concurrency))
+
+
+async def _run_concurrent_account_jobs(jobs, concurrency: int):
+    """
+    Runs account jobs concurrently, limited by concurrency.
+    """
+    concurrency = max(1, int(concurrency))
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def _wrapped(job_func):
+        async with semaphore:
+            return await job_func()
+
+    results = await asyncio.gather(
+        *(_wrapped(job_func) for job_func in jobs),
+        return_exceptions=True
+    )
+
+    for result in results:
+        if isinstance(result, Exception):
+            print(f"❌ concurrent account job error: {result}")
+
+    return results
 
 
 # ============================================================

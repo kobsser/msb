@@ -755,6 +755,26 @@ EDITABLE_SETTINGS = [
         "label": "Transfer confirmation max retries",
         "type": "number"
     },
+    {
+        "key": "USER_JOB_CONCURRENCY",
+        "label": "Concurrent account jobs (default 3)",
+        "type": "number"
+    },
+    {
+        "key": "STATUS_UPDATE_CONCURRENCY",
+        "label": "Status update concurrency (0 or empty = global)",
+        "type": "number"
+    },
+    {
+        "key": "PROFILE_UPDATE_CONCURRENCY",
+        "label": "Profile update concurrency (0 or empty = global)",
+        "type": "number"
+    },
+    {
+        "key": "TRANSFER_CONCURRENCY",
+        "label": "Transfer concurrency (0 or empty = global)",
+        "type": "number"
+    },
 ]
 
 

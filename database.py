@@ -56,6 +56,9 @@ DEFAULT_SETTINGS = {
     "TRANSFER_CONFIRM_TIMEOUT": "30",
     "TRANSFER_CONFIRM_EDIT_TIMEOUT": "20",
     "TRANSFER_CONFIRM_MAX_RETRIES": "3",
+
+    # Concurrent account jobs
+    "USER_JOB_CONCURRENCY": "3",
 }
 
 
