@@ -1,12 +1,45 @@
 {% extends "base.html" %}
 {% block title %}داشبورد{% endblock %}
 {% block content %}
+
+<!-- Header -->
 <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
     <h2 class="text-2xl font-bold">اکانت‌های من</h2>
     <a href="{{ url_for('add_account') }}" class="btn btn-primary">+ افزودن اکانت جدید</a>
 </div>
 
-<!-- Global tools -->
+<!-- Summary Cards -->
+<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+    <div class="card bg-base-100 shadow">
+        <div class="card-body p-4">
+            <div class="text-sm opacity-60">اکانت‌ها</div>
+            <div class="text-xl font-bold">{{ accounts|length }}</div>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow">
+        <div class="card-body p-4">
+            <div class="text-sm opacity-60">فعال</div>
+            <div class="text-xl font-bold text-success">{{ active_count }}</div>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow">
+        <div class="card-body p-4">
+            <div class="text-sm opacity-60">خطا</div>
+            <div class="text-xl font-bold text-error">{{ error_count }}</div>
+        </div>
+    </div>
+
+    <div class="card bg-base-100 shadow">
+        <div class="card-body p-4">
+            <div class="text-sm opacity-60">موجودی کل</div>
+            <div class="text-xl font-bold text-info">{{ "{:,}".format(total_balance or 0) }}</div>
+        </div>
+    </div>
+</div>
+
+<!-- Global Tools -->
 <div class="card bg-base-100 shadow-xl mb-6">
     <div class="card-body gap-4">
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -54,21 +87,89 @@
     </div>
 </div>
 
-{% if accounts %}
-<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-    {% for acc in accounts %}
-    <div class="card bg-base-100 shadow-xl">
-        <div class="card-body">
-            <h2 class="card-title text-lg">
-                {{ acc.account_name or '📱 بدون نام' }}
-            </h2>
-            <div class="text-sm opacity-70 -mt-2" dir="ltr">{{ acc.phone }}</div>
+<!-- Search / Filter / Sort / Bulk -->
+<div class="card bg-base-100 shadow mb-6">
+    <div class="card-body p-4">
+        <div class="grid grid-cols-1 md:grid-cols-5 gap-3">
+            <input id="account-search" type="text" placeholder="جستجو..." class="input input-bordered w-full">
 
+            <select id="status-filter" class="select select-bordered w-full">
+                <option value="">همه وضعیت‌ها</option>
+                <option value="1">فعال</option>
+                <option value="0">غیرفعال</option>
+            </select>
+
+            <select id="feature-filter" class="select select-bordered w-full">
+                <option value="">همه فیچرها</option>
+                <option value="meow">میو روشن</option>
+                <option value="pishi">پیشی روشن</option>
+                <option value="fishing">ماهی روشن</option>
+                <option value="rescue">نجات روشن</option>
+            </select>
+
+            <select id="sort-by" class="select select-bordered w-full">
+                <option value="balance_desc">موجودی: زیاد به کم</option>
+                <option value="balance_asc">موجودی: کم به زیاد</option>
+                <option value="name_asc">نام: الفبا</option>
+            </select>
+
+            <div class="flex gap-2">
+                <button id="bulk-start" class="btn btn-success btn-sm flex-1">شروع انتخاب‌شده‌ها</button>
+                <button id="bulk-stop" class="btn btn-error btn-sm flex-1">توقف انتخاب‌شده‌ها</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Account Cards -->
+{% if accounts %}
+<div id="accounts-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+    {% for acc in accounts %}
+    <div class="card bg-base-100 shadow-xl account-card"
+        data-search="{{ (acc.account_name or '')|lower }} {{ acc.uid|lower }}"
+        data-active="{{ 1 if acc.is_active else 0 }}"
+        data-balance="{{ acc.balance or 0 }}"
+        data-name="{{ acc.account_name or '' }}"
+        data-meow="{{ 1 if acc.meow_enabled else 0 }}"
+        data-pishi="{{ 1 if acc.pishi_enabled else 0 }}"
+        data-fishing="{{ 1 if acc.fishing_enabled else 0 }}"
+        data-rescue="{{ 1 if acc.rescue_enabled else 0 }}">
+        <div class="card-body">
+            <!-- Title + Checkbox -->
+            <div class="flex justify-between items-start gap-2">
+                <div>
+                    <h2 class="card-title text-lg">
+                        {{ acc.account_name or '📱 بدون نام' }}
+                    </h2>
+
+                    <div class="text-sm opacity-70 -mt-2 flex items-center gap-2" dir="ltr">
+                        <span class="masked-phone">***</span>
+                        <button type="button" class="btn btn-ghost btn-circle btn-xs reveal-phone"
+                            data-url="{{ url_for('reveal_phone', uid=acc.uid) }}">
+                            👁
+                        </button>
+                    </div>
+                </div>
+
+                <input type="checkbox" class="checkbox checkbox-sm bulk-check" value="{{ acc.uid }}">
+            </div>
+
+            <!-- Status badges -->
             <div class="flex flex-wrap gap-1 mt-2">
                 {% if acc.is_active %}
                 <span class="badge badge-success">🟢 فعال</span>
                 {% else %}
                 <span class="badge badge-ghost">⚪ غیرفعال</span>
+                {% endif %}
+
+                {% if acc.session_status == 'connected' %}
+                <span class="badge badge-success">session: connected</span>
+                {% elif acc.session_status == 'error' %}
+                <span class="badge badge-error">session: error</span>
+                {% elif acc.session_status == 'stopped' %}
+                <span class="badge badge-ghost">session: stopped</span>
+                {% else %}
+                <span class="badge badge-ghost">session: unknown</span>
                 {% endif %}
 
                 {% if acc.in_backup_group == 1 %}
@@ -80,13 +181,23 @@
                 {% endif %}
             </div>
 
+            <!-- Stats badges -->
             <div class="flex flex-wrap gap-1 mt-1">
                 <span class="badge badge-info">💰 {{ "{:,}".format(acc.balance or 0) }}</span>
                 <span class="badge badge-primary">⭐️ سطح {{ acc.level or 0 }}</span>
                 <span class="badge badge-secondary">🐾 {{ acc.meow_count or 0 }}</span>
                 <span class="badge badge-accent">🐈 {{ acc.street_cats or 0 }}</span>
+
+                {% if acc.pishi_level_max > 0 %}
+                    {% if acc.pishi_level_current >= acc.pishi_level_max %}
+                    <span class="badge badge-success">🐱 سطح {{ acc.pishi_level_current }}/{{ acc.pishi_level_max }}</span>
+                    {% else %}
+                    <span class="badge badge-warning">🐱 سطح {{ acc.pishi_level_current }}/{{ acc.pishi_level_max }}</span>
+                    {% endif %}
+                {% endif %}
             </div>
 
+            <!-- Ranks -->
             <p class="text-xs opacity-60 mt-1">
                 رتبه‌ها: 💰 {{ "{:,}".format(acc.balance_rank or 0) }} |
                 🐾 {{ "{:,}".format(acc.meow_rank or 0) }} |
@@ -94,24 +205,31 @@
                 {% if acc.level_progress %} | ⭐️ {{ acc.level_progress }} {% endif %}
             </p>
 
+            <!-- Feature toggles -->
             <div class="flex flex-wrap gap-1 mt-1">
                 <span class="badge badge-info gap-1">میو: {{ 'روشن' if acc.meow_enabled else 'خاموش' }}</span>
                 <span class="badge badge-warning text-neutral gap-1">پیشی: {{ 'روشن' if acc.pishi_enabled else 'خاموش' }}</span>
                 <span class="badge badge-primary gap-1">ماهی: {{ 'روشن' if acc.fishing_enabled else 'خاموش' }}</span>
+                <span class="badge badge-success gap-1">نجات: {{ 'روشن' if acc.rescue_enabled else 'خاموش' }}</span>
             </div>
 
+            <!-- Groups count -->
             <p class="text-sm text-base-content/70 mt-1">
                 گروه‌ها: {{ acc.selected_groups | length }} انتخاب شده
             </p>
 
+            <!-- Actions -->
             <div class="card-actions justify-end mt-4">
-                <a href="{{ url_for('account_settings', phone=acc.phone) }}" class="btn btn-outline btn-primary btn-sm">تنظیمات</a>
-                <form action="{{ url_for('toggle_account', phone=acc.phone) }}" method="POST">
+                <a href="{{ url_for('account_settings', uid=acc.uid) }}" class="btn btn-outline btn-primary btn-sm">تنظیمات</a>
+                <a href="{{ url_for('account_logs', uid=acc.uid) }}" class="btn btn-outline btn-ghost btn-sm">لاگ‌ها</a>
+
+                <form action="{{ url_for('toggle_account', uid=acc.uid) }}" method="POST">
                     <button type="submit" class="btn btn-sm {% if acc.is_active %}btn-outline btn-error{% else %}btn-outline btn-success{% endif %}">
                         {{ 'توقف' if acc.is_active else 'شروع' }}
                     </button>
                 </form>
-                <form action="{{ url_for('delete_account', phone=acc.phone) }}" method="POST" onsubmit="return confirm('آیا از حذف این اکانت مطمئن هستید؟');">
+
+                <form action="{{ url_for('delete_account', uid=acc.uid) }}" method="POST" onsubmit="return confirm('آیا از حذف این اکانت مطمئن هستید؟');">
                     <button type="submit" class="btn btn-outline btn-error btn-sm">حذف</button>
                 </form>
             </div>
@@ -124,4 +242,142 @@
     <span>هنوز اکانتی اضافه نکرده‌اید. روی "افزودن اکانت جدید" کلیک کنید.</span>
 </div>
 {% endif %}
+
+<script>
+    // Reveal masked phone
+    document.querySelectorAll(".reveal-phone").forEach(function (btn) {
+        btn.addEventListener("click", async function () {
+            const phoneSpan = btn.parentElement.querySelector(".masked-phone");
+
+            if (btn.dataset.revealed === "1") {
+                phoneSpan.textContent = "***";
+                btn.dataset.revealed = "0";
+                btn.textContent = "👁";
+                return;
+            }
+
+            try {
+                const response = await fetch(btn.dataset.url);
+                const data = await response.json();
+
+                if (data.phone) {
+                    phoneSpan.textContent = data.phone;
+                    phoneSpan.setAttribute("dir", "ltr");
+                    btn.dataset.revealed = "1";
+                    btn.textContent = "🙈";
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        });
+    });
+
+    // Search/filter/sort
+    const searchInput = document.getElementById("account-search");
+    const statusFilter = document.getElementById("status-filter");
+    const featureFilter = document.getElementById("feature-filter");
+    const sortBy = document.getElementById("sort-by");
+    const grid = document.getElementById("accounts-grid");
+
+    function applyDashboardFilters() {
+        const query = (searchInput.value || "").toLowerCase();
+        const status = statusFilter.value;
+        const feature = featureFilter.value;
+
+        document.querySelectorAll(".account-card").forEach(function (card) {
+            let visible = true;
+
+            if (query && !card.dataset.search.includes(query)) {
+                visible = false;
+            }
+
+            if (status !== "" && card.dataset.active !== status) {
+                visible = false;
+            }
+
+            if (feature === "meow" && card.dataset.meow !== "1") visible = false;
+            if (feature === "pishi" && card.dataset.pishi !== "1") visible = false;
+            if (feature === "fishing" && card.dataset.fishing !== "1") visible = false;
+            if (feature === "rescue" && card.dataset.rescue !== "1") visible = false;
+
+            card.style.display = visible ? "" : "none";
+        });
+    }
+
+    function applyDashboardSort() {
+        const cards = Array.from(document.querySelectorAll(".account-card"));
+
+        cards.sort(function (a, b) {
+            if (sortBy.value === "balance_desc") {
+                return parseInt(b.dataset.balance) - parseInt(a.dataset.balance);
+            }
+
+            if (sortBy.value === "balance_asc") {
+                return parseInt(a.dataset.balance) - parseInt(b.dataset.balance);
+            }
+
+            if (sortBy.value === "name_asc") {
+                return (a.dataset.name || "").localeCompare(b.dataset.name || "");
+            }
+
+            return 0;
+        });
+
+        cards.forEach(function (card) {
+            grid.appendChild(card);
+        });
+    }
+
+    if (searchInput) {
+        searchInput.addEventListener("input", applyDashboardFilters);
+        statusFilter.addEventListener("change", applyDashboardFilters);
+        featureFilter.addEventListener("change", applyDashboardFilters);
+        sortBy.addEventListener("change", applyDashboardSort);
+
+        applyDashboardFilters();
+        applyDashboardSort();
+    }
+
+    // Bulk actions
+    function submitBulk(actionUrl) {
+        const selected = Array.from(document.querySelectorAll(".bulk-check:checked")).map(function (checkbox) {
+            return checkbox.value;
+        });
+
+        if (selected.length === 0) {
+            alert("هیچ اکانتی انتخاب نشده است");
+            return;
+        }
+
+        const form = document.createElement("form");
+        form.method = "POST";
+        form.action = actionUrl;
+
+        selected.forEach(function (uid) {
+            const input = document.createElement("input");
+            input.type = "hidden";
+            input.name = "uids[]";
+            input.value = uid;
+            form.appendChild(input);
+        });
+
+        document.body.appendChild(form);
+        form.submit();
+    }
+
+    const bulkStart = document.getElementById("bulk-start");
+    const bulkStop = document.getElementById("bulk-stop");
+
+    if (bulkStart) {
+        bulkStart.addEventListener("click", function () {
+            submitBulk("{{ url_for('bulk_start') }}");
+        });
+    }
+
+    if (bulkStop) {
+        bulkStop.addEventListener("click", function () {
+            submitBulk("{{ url_for('bulk_stop') }}");
+        });
+    }
+</script>
 {% endblock %}

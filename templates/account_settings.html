@@ -3,18 +3,33 @@
 {% block content %}
 <div class="card bg-base-100 shadow-xl">
     <div class="card-body">
+        <!-- Header -->
         <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
-            <h2 class="card-title text-2xl">تنظیمات {{ acc.phone }}</h2>
+            <div>
+                <h2 class="card-title text-2xl">تنظیمات {{ acc.account_name or acc.uid }}</h2>
+
+                <div class="text-sm opacity-70 flex items-center gap-2 mt-1" dir="ltr">
+                    <span class="masked-phone">***</span>
+                    <button type="button" class="btn btn-ghost btn-circle btn-xs reveal-phone"
+                        data-url="{{ url_for('reveal_phone', uid=acc.uid) }}">
+                        👁
+                    </button>
+                </div>
+            </div>
 
             <div class="flex gap-2">
-                <form action="{{ url_for('reset_timers', phone=acc.phone) }}" method="POST" class="inline"
+                <a href="{{ url_for('account_logs', uid=acc.uid) }}" class="btn btn-outline btn-ghost btn-sm">
+                    📄 لاگ‌ها
+                </a>
+
+                <form action="{{ url_for('reset_timers', uid=acc.uid) }}" method="POST" class="inline"
                     onsubmit="return confirm('Reset all timers?');">
                     <button type="submit" class="btn btn-outline btn-warning btn-sm">
                         ⏱ ریست تایمرها
                     </button>
                 </form>
 
-                <form action="{{ url_for('refresh_groups', phone=acc.phone) }}" method="POST" class="inline">
+                <form action="{{ url_for('refresh_groups', uid=acc.uid) }}" method="POST" class="inline">
                     <button type="submit" class="btn btn-outline btn-secondary btn-sm">
                         🔄 بروزرسانی گروه‌ها
                     </button>
@@ -22,7 +37,8 @@
             </div>
         </div>
 
-        <form action="{{ url_for('save_account_settings', phone=acc.phone) }}" method="POST">
+        <form action="{{ url_for('save_account_settings', uid=acc.uid) }}" method="POST">
+            <!-- Feature toggles -->
             <div class="form-control mb-3">
                 <label class="cursor-pointer label justify-start gap-3 p-0">
                     <input type="checkbox" name="meow_enabled" class="toggle toggle-primary" {% if acc.meow_enabled %}checked{% endif %} />
@@ -37,16 +53,24 @@
                 </label>
             </div>
 
-            <div class="form-control mb-6">
+            <div class="form-control mb-3">
                 <label class="cursor-pointer label justify-start gap-3 p-0">
                     <input type="checkbox" name="fishing_enabled" class="toggle toggle-accent" {% if acc.fishing_enabled %}checked{% endif %} />
                     <span class="label-text font-bold text-lg">فعالسازی ماهیگیری (Fishing)</span>
                 </label>
             </div>
 
+            <div class="form-control mb-6">
+                <label class="cursor-pointer label justify-start gap-3 p-0">
+                    <input type="checkbox" name="rescue_enabled" class="toggle toggle-success" {% if acc.rescue_enabled %}checked{% endif %} />
+                    <span class="label-text font-bold text-lg">فعالسازی نجات (Rescue)</span>
+                </label>
+            </div>
+
             <div class="divider"></div>
 
-            <h3 class="text-xl font-bold mb-4">گروه‌های هدف</h3>
+            <!-- Main groups -->
+            <h3 class="text-xl font-bold mb-4">گروه‌های هدف اصلی</h3>
 
             <div class="form-control mb-4 max-h-64 overflow-y-auto bg-base-200 p-4 rounded-lg">
                 {% for group in acc.cached_groups %}
@@ -67,7 +91,7 @@
 
             <div class="form-control mb-6">
                 <label class="label">
-                    <span class="label-text">افزودن دستی آیدی گروه</span>
+                    <span class="label-text">افزودن دستی آیدی گروه اصلی</span>
                 </label>
                 <input type="text" name="manual_group_id" class="input input-bordered" placeholder="-100123456789" dir="ltr">
                 <label class="label">
@@ -75,9 +99,76 @@
                 </label>
             </div>
 
+            <div class="divider"></div>
+
+            <!-- Rescue groups -->
+            <h3 class="text-xl font-bold mb-4">گروه‌های Rescue</h3>
+            <p class="text-sm opacity-60 mb-4">
+                Rescue علاوه بر گروه‌های اصلی و گروه بکاپ، به این گروه‌ها نیز گوش می‌دهد.
+            </p>
+
+            <div class="form-control mb-4 max-h-64 overflow-y-auto bg-base-200 p-4 rounded-lg">
+                {% for group in acc.cached_groups %}
+                <label class="cursor-pointer label justify-start gap-3 hover:bg-base-300 rounded-lg p-2 mb-1 transition-colors">
+                    <input type="checkbox" name="rescue_groups" value="{{ group.id }}" class="checkbox checkbox-sm"
+                        id="rg_{{ group.id }}" {% if group.id|string in acc.rescue_groups %}checked{% endif %} />
+                    <span class="label-text flex justify-between w-full items-center">
+                        <span>{{ group.title }}</span>
+                        <span class="badge badge-ghost badge-sm">{{ group.members or 0 }}👤</span>
+                    </span>
+                </label>
+                {% else %}
+                <p class="text-error text-center my-4">
+                    هیچ گروهی پیدا نشد. ابتدا روی "بروزرسانی گروه‌ها" کلیک کنید.
+                </p>
+                {% endfor %}
+            </div>
+
+            <div class="form-control mb-6">
+                <label class="label">
+                    <span class="label-text">افزودن دستی آیدی گروه Rescue</span>
+                </label>
+                <input type="text" name="manual_rescue_group_id" class="input input-bordered" placeholder="-100123456789" dir="ltr">
+                <label class="label">
+                    <span class="label-text-alt">اگر گروه در لیست بالا نیست، آیدی عددی آن را اینجا وارد کنید.</span>
+                </label>
+            </div>
+
+            <!-- Submit -->
             <button type="submit" class="btn btn-primary w-full mb-3">ذخیره تنظیمات</button>
             <a href="{{ url_for('dashboard') }}" class="btn btn-outline w-full">بازگشت</a>
         </form>
     </div>
 </div>
+
+<script>
+    const revealBtn = document.querySelector(".reveal-phone");
+
+    if (revealBtn) {
+        revealBtn.addEventListener("click", async function () {
+            const phoneSpan = revealBtn.parentElement.querySelector(".masked-phone");
+
+            if (revealBtn.dataset.revealed === "1") {
+                phoneSpan.textContent = "***";
+                revealBtn.dataset.revealed = "0";
+                revealBtn.textContent = "👁";
+                return;
+            }
+
+            try {
+                const response = await fetch(revealBtn.dataset.url);
+                const data = await response.json();
+
+                if (data.phone) {
+                    phoneSpan.textContent = data.phone;
+                    phoneSpan.setAttribute("dir", "ltr");
+                    revealBtn.dataset.revealed = "1";
+                    revealBtn.textContent = "🙈";
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        });
+    }
+</script>
 {% endblock %}

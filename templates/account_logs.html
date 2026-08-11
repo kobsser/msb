@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}لاگ‌های اکانت{% endblock %}
+{% block content %}
+<div class="card bg-base-100 shadow-xl">
+    <div class="card-body">
+        <!-- Header -->
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-4">
+            <div>
+                <h2 class="card-title text-xl">
+                    لاگ‌های {{ acc.account_name or acc.uid }}
+                </h2>
+                <div class="text-sm opacity-60 mt-1">
+                    آخرین لاگ‌ها (حداکثر ۲۰۰ مورد اخیر)
+                </div>
+            </div>
+
+            <a href="{{ url_for('account_settings', uid=acc.uid) }}" class="btn btn-outline btn-sm">
+                بازگشت به تنظیمات
+            </a>
+        </div>
+
+        <!-- Logs table -->
+        <div class="overflow-x-auto">
+            <table class="table table-zebra">
+                <thead>
+                    <tr>
+                        <th>زمان</th>
+                        <th>فیچر</th>
+                        <th>اکشن</th>
+                        <th>وضعیت</th>
+                        <th>پیام</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+                    {% for log in logs %}
+                    <tr>
+                        <td class="text-sm opacity-70 whitespace-nowrap">
+                            {{ log.created_at }}
+                        </td>
+                        <td>
+                            {% if log.feature == 'meow' %}
+                            <span class="badge badge-info badge-sm">میو</span>
+                            {% elif log.feature == 'pishi' %}
+                            <span class="badge badge-warning badge-sm">پیشی</span>
+                            {% elif log.feature == 'fishing' %}
+                            <span class="badge badge-primary badge-sm">ماهی</span>
+                            {% elif log.feature == 'rescue' %}
+                            <span class="badge badge-success badge-sm">نجات</span>
+                            {% elif log.feature == 'transfer' %}
+                            <span class="badge badge-accent badge-sm">انتقال</span>
+                            {% else %}
+                            <span class="badge badge-ghost badge-sm">{{ log.feature }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-sm">{{ log.action }}</td>
+                        <td>
+                            {% if log.status == 'success' %}
+                            <span class="badge badge-success badge-sm">success</span>
+                            {% elif log.status == 'warning' %}
+                            <span class="badge badge-warning badge-sm">warning</span>
+                            {% elif log.status == 'error' %}
+                            <span class="badge badge-error badge-sm">error</span>
+                            {% else %}
+                            <span class="badge badge-ghost badge-sm">{{ log.status }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-sm max-w-xs truncate" title="{{ log.message }}">
+                            {{ log.message }}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="5" class="text-center opacity-60 py-6">
+                            هنوز لاگی ثبت نشده است.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

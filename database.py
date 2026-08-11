@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import secrets
 import threading
 from contextlib import contextmanager
 
@@ -20,6 +21,10 @@ try:
 except Exception:
     raise RuntimeError("ENCRYPTION_KEY is not a valid Fernet key.")
 
+
+# ============================================================
+# Default settings
+# ============================================================
 
 DEFAULT_SETTINGS = {
     "STARTUP_DELAY": "10",
@@ -52,13 +57,13 @@ DEFAULT_SETTINGS = {
     # Profile fetch (میوهام) reply timeout
     "PROFILE_FETCH_TIMEOUT": "20",
 
+    # Concurrent account jobs
+    "USER_JOB_CONCURRENCY": "3",
+
     # Transfer confirmation
     "TRANSFER_CONFIRM_TIMEOUT": "30",
     "TRANSFER_CONFIRM_EDIT_TIMEOUT": "20",
     "TRANSFER_CONFIRM_MAX_RETRIES": "3",
-
-    # Concurrent account jobs
-    "USER_JOB_CONCURRENCY": "3",
 
     # Rescue cat
     "RESCUE_MAX_CLICKS": "15",
@@ -66,8 +71,23 @@ DEFAULT_SETTINGS = {
     "RESCUE_FAST_CLICK_MIN_DELAY": "0.10",
     "RESCUE_FAST_CLICK_MAX_DELAY": "0.25",
     "RESCUE_NORMAL_CLICK_DELAY": "1.0",
+
+    # Global automation toggles
+    "GLOBAL_AUTOMATION_ENABLED": "1",
+    "GLOBAL_MEOW_ENABLED": "1",
+    "GLOBAL_PISHI_ENABLED": "1",
+    "GLOBAL_FISHING_ENABLED": "1",
+    "GLOBAL_RESCUE_ENABLED": "1",
+    "GLOBAL_TRANSFER_ENABLED": "1",
+
+    # Maintenance
+    "MAINTENANCE_MODE": "0",
 }
 
+
+# ============================================================
+# Connection helpers
+# ============================================================
 
 def _db_url():
     url = os.getenv("DATABASE_URL", "").strip()
@@ -98,23 +118,32 @@ def get_conn():
 @contextmanager
 def get_db_cursor(commit: bool = False, dict_cursor: bool = False):
     conn = get_conn()
+
     if dict_cursor:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     else:
         cur = conn.cursor()
+
     try:
         yield cur
+
         if commit:
             conn.commit()
+
     except Exception:
         conn.rollback()
         raise
+
     finally:
         try:
             cur.close()
         except Exception:
             pass
 
+
+# ============================================================
+# Encryption
+# ============================================================
 
 def encrypt_session(session_string: str) -> str:
     if not session_string:
@@ -133,14 +162,23 @@ def decrypt_session(encrypted_string: str) -> str:
         return encrypted_string
 
 
+# ============================================================
+# Init DB
+# ============================================================
+
 def init_db():
     with get_db_cursor(commit=True) as cur:
+        # ----------------------------------------------------------
+        # Tables
+        # ----------------------------------------------------------
+
         cur.execute("""
             CREATE TABLE IF NOT EXISTS web_users (
                 id SERIAL PRIMARY KEY,
                 username TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
                 is_admin INTEGER DEFAULT 0,
+                is_disabled INTEGER DEFAULT 0,
                 backup_group_id TEXT DEFAULT '',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -159,12 +197,15 @@ def init_db():
         cur.execute("""
             CREATE TABLE IF NOT EXISTS tg_accounts (
                 phone TEXT PRIMARY KEY,
+                uid TEXT DEFAULT '',
                 owner_id INTEGER NOT NULL,
                 session_string TEXT NOT NULL,
                 selected_groups TEXT DEFAULT '[]',
                 meow_enabled INTEGER DEFAULT 0,
                 pishi_enabled INTEGER DEFAULT 0,
                 fishing_enabled INTEGER DEFAULT 0,
+                rescue_enabled INTEGER DEFAULT 0,
+                rescue_groups TEXT DEFAULT '[]',
                 is_active INTEGER DEFAULT 0,
                 cached_groups TEXT DEFAULT '[]',
                 meow_next_run BIGINT DEFAULT 0,
@@ -183,15 +224,47 @@ def init_db():
             )
         """)
 
-        # Compatibility migrations for older databases
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS account_logs (
+                id SERIAL PRIMARY KEY,
+                account_uid TEXT DEFAULT '',
+                phone TEXT DEFAULT '',
+                feature TEXT DEFAULT '',
+                action TEXT DEFAULT '',
+                status TEXT DEFAULT '',
+                message TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # ----------------------------------------------------------
+        # Migrations for older databases
+        # ----------------------------------------------------------
+
         cur.execute("""
             DO $$
             BEGIN
+                -- web_users migrations
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='web_users' AND column_name='is_disabled'
+                ) THEN
+                    ALTER TABLE web_users ADD COLUMN is_disabled INTEGER DEFAULT 0;
+                END IF;
+
                 IF NOT EXISTS (
                     SELECT 1 FROM information_schema.columns
                     WHERE table_name='web_users' AND column_name='backup_group_id'
                 ) THEN
                     ALTER TABLE web_users ADD COLUMN backup_group_id TEXT DEFAULT '';
+                END IF;
+
+                -- tg_accounts migrations
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='uid'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN uid TEXT DEFAULT '';
                 END IF;
 
                 IF NOT EXISTS (
@@ -206,6 +279,34 @@ def init_db():
                     WHERE table_name='tg_accounts' AND column_name='fishing_enabled'
                 ) THEN
                     ALTER TABLE tg_accounts ADD COLUMN fishing_enabled INTEGER DEFAULT 0;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='rescue_enabled'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN rescue_enabled INTEGER DEFAULT 0;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='rescue_groups'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN rescue_groups TEXT DEFAULT '[]';
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='account_name'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN account_name TEXT DEFAULT '';
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='in_backup_group'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN in_backup_group INTEGER DEFAULT -1;
                 END IF;
 
                 IF NOT EXISTS (
@@ -243,20 +344,7 @@ def init_db():
                     ALTER TABLE tg_accounts ADD COLUMN fishing_periodic_check_at BIGINT DEFAULT 0;
                 END IF;
 
-                IF NOT EXISTS (
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_name='tg_accounts' AND column_name='account_name'
-                ) THEN
-                    ALTER TABLE tg_accounts ADD COLUMN account_name TEXT DEFAULT '';
-                END IF;
-
-                IF NOT EXISTS (
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_name='tg_accounts' AND column_name='in_backup_group'
-                ) THEN
-                    ALTER TABLE tg_accounts ADD COLUMN in_backup_group INTEGER DEFAULT -1;
-                END IF;
-
+                -- Profile fields
                 IF NOT EXISTS (
                     SELECT 1 FROM information_schema.columns
                     WHERE table_name='tg_accounts' AND column_name='balance'
@@ -319,10 +407,85 @@ def init_db():
                 ) THEN
                     ALTER TABLE tg_accounts ADD COLUMN profile_updated_at BIGINT DEFAULT 0;
                 END IF;
+
+                -- Pishi info fields
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='pishi_rank_number'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN pishi_rank_number INTEGER DEFAULT 0;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='pishi_level_current'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN pishi_level_current INTEGER DEFAULT 0;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='pishi_level_max'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN pishi_level_max INTEGER DEFAULT 0;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='pishi_mps'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN pishi_mps BIGINT DEFAULT 0;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='pishi_capacity'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN pishi_capacity BIGINT DEFAULT 0;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='pishi_upgrade_cost'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN pishi_upgrade_cost BIGINT DEFAULT 0;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='pishi_info_updated_at'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN pishi_info_updated_at BIGINT DEFAULT 0;
+                END IF;
+
+                -- Session / reliability fields
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='session_status'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN session_status TEXT DEFAULT 'unknown';
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='last_error'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN last_error TEXT DEFAULT '';
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='flood_wait_until'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN flood_wait_until BIGINT DEFAULT 0;
+                END IF;
             END $$;
         """)
 
+        # ----------------------------------------------------------
         # Convert old REAL / DOUBLE PRECISION timer columns to BIGINT
+        # ----------------------------------------------------------
+
         cur.execute("""
             DO $$
             BEGIN
@@ -408,7 +571,10 @@ def init_db():
             END $$;
         """)
 
+        # ----------------------------------------------------------
         # Insert default settings
+        # ----------------------------------------------------------
+
         for key, value in DEFAULT_SETTINGS.items():
             cur.execute(
                 """
@@ -418,6 +584,24 @@ def init_db():
                 """,
                 (key, value)
             )
+
+    # ----------------------------------------------------------
+    # Ensure UIDs exist for old accounts
+    # ----------------------------------------------------------
+
+    ensure_account_uids()
+
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_tg_accounts_uid
+            ON tg_accounts(uid)
+            """
+        )
+
+    # ----------------------------------------------------------
+    # Create admin user if env vars are set
+    # ----------------------------------------------------------
 
     admin_user = os.getenv("ADMIN_USERNAME")
     admin_pass = os.getenv("ADMIN_PASSWORD")
@@ -493,6 +677,7 @@ def get_setting_float(key, default=0.0):
 
 def create_web_user(username, password, is_admin=False):
     pw_hash = generate_password_hash(password)
+
     with get_db_cursor(commit=True) as cur:
         cur.execute(
             "INSERT INTO web_users (username, password_hash, is_admin) VALUES (%s, %s, %s)",
@@ -505,7 +690,14 @@ def get_web_user(username):
         cur.execute("SELECT * FROM web_users WHERE username = %s", (username,))
         row = cur.fetchone()
 
-    return dict(row) if row else None
+    if not row:
+        return None
+
+    result = dict(row)
+    result["is_disabled"] = bool(result.get("is_disabled"))
+    result["is_admin"] = bool(result.get("is_admin"))
+
+    return result
 
 
 def get_web_user_by_id(user_id):
@@ -513,7 +705,23 @@ def get_web_user_by_id(user_id):
         cur.execute("SELECT * FROM web_users WHERE id = %s", (user_id,))
         row = cur.fetchone()
 
-    return dict(row) if row else None
+    if not row:
+        return None
+
+    result = dict(row)
+    result["is_disabled"] = bool(result.get("is_disabled"))
+    result["is_admin"] = bool(result.get("is_admin"))
+
+    return result
+
+
+def verify_web_user(username, password):
+    user = get_web_user(username)
+
+    if user and check_password_hash(user["password_hash"], password):
+        return user
+
+    return None
 
 
 def set_backup_group_id(user_id, group_id):
@@ -524,13 +732,37 @@ def set_backup_group_id(user_id, group_id):
         )
 
 
-def verify_web_user(username, password):
-    user = get_web_user(username)
+def set_user_disabled(user_id, disabled):
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            "UPDATE web_users SET is_disabled = %s WHERE id = %s",
+            (1 if disabled else 0, user_id)
+        )
 
-    if user and check_password_hash(user["password_hash"], password):
-        return user
 
-    return None
+def get_all_web_users_with_counts():
+    with get_db_cursor(dict_cursor=True) as cur:
+        cur.execute(
+            """
+            SELECT
+                u.*,
+                (
+                    SELECT COUNT(*)
+                    FROM tg_accounts a
+                    WHERE a.owner_id = u.id
+                ) AS accounts_count
+            FROM web_users u
+            ORDER BY u.created_at DESC
+            """
+        )
+
+        rows = [dict(row) for row in cur.fetchall()]
+
+        for row in rows:
+            row["is_disabled"] = bool(row.get("is_disabled"))
+            row["is_admin"] = bool(row.get("is_admin"))
+
+        return rows
 
 
 # ============================================================
@@ -571,7 +803,186 @@ def use_invite(code, user_id):
 
 
 # ============================================================
-# Telegram accounts
+# UID helpers
+# ============================================================
+
+def generate_account_uid():
+    alphabet = "abcdefghijklmnopqrstuvwxyz"
+    return "".join(secrets.choice(alphabet) for _ in range(6))
+
+
+def generate_unique_account_uid():
+    for _ in range(30):
+        uid = generate_account_uid()
+
+        with get_db_cursor(dict_cursor=True) as cur:
+            cur.execute(
+                "SELECT 1 FROM tg_accounts WHERE uid = %s",
+                (uid,)
+            )
+
+            if not cur.fetchone():
+                return uid
+
+    raise RuntimeError("Could not generate a unique account UID")
+
+
+def ensure_account_uids():
+    with get_db_cursor(commit=True, dict_cursor=True) as cur:
+        cur.execute(
+            """
+            SELECT uid
+            FROM tg_accounts
+            WHERE uid IS NOT NULL
+              AND uid <> ''
+            """
+        )
+
+        existing_uids = {row["uid"] for row in cur.fetchall()}
+
+        cur.execute(
+            """
+            SELECT phone
+            FROM tg_accounts
+            WHERE uid IS NULL
+               OR uid = ''
+            """
+        )
+
+        missing = cur.fetchall()
+
+        for row in missing:
+            for _ in range(30):
+                uid = generate_account_uid()
+
+                if uid not in existing_uids:
+                    break
+            else:
+                raise RuntimeError("Could not generate a unique account UID")
+
+            existing_uids.add(uid)
+
+            cur.execute(
+                "UPDATE tg_accounts SET uid = %s WHERE phone = %s",
+                (uid, row["phone"])
+            )
+
+
+# ============================================================
+# Phone masking
+# ============================================================
+
+def mask_phone(phone):
+    s = str(phone or "").strip()
+
+    if len(s) <= 4:
+        return "****"
+
+    return s[:3] + "***" + s[-4:]
+
+
+# ============================================================
+# Account logs
+# ============================================================
+
+def add_account_log(phone, feature, action, status, message, account_uid=None):
+    try:
+        uid = account_uid or ""
+
+        if not uid:
+            account = get_tg_account(phone)
+            uid = (account or {}).get("uid", "")
+
+        with get_db_cursor(commit=True) as cur:
+            cur.execute(
+                """
+                INSERT INTO account_logs (
+                    account_uid,
+                    phone,
+                    feature,
+                    action,
+                    status,
+                    message
+                )
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    uid,
+                    str(phone or ""),
+                    str(feature or ""),
+                    str(action or ""),
+                    str(status or ""),
+                    str(message or "")
+                )
+            )
+
+    except Exception as e:
+        print(f"❌ add_account_log error: {e}")
+
+
+def get_account_logs(account_uid, limit=200):
+    with get_db_cursor(dict_cursor=True) as cur:
+        cur.execute(
+            """
+            SELECT *
+            FROM account_logs
+            WHERE account_uid = %s
+            ORDER BY id DESC
+            LIMIT %s
+            """,
+            (str(account_uid or ""), int(limit))
+        )
+
+        return [dict(row) for row in cur.fetchall()]
+
+
+# ============================================================
+# Session status / FloodWait
+# ============================================================
+
+def update_session_status(phone, status, error=""):
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            UPDATE tg_accounts
+            SET
+                session_status = %s,
+                last_error = %s
+            WHERE phone = %s
+            """,
+            (str(status or "unknown"), str(error or ""), str(phone))
+        )
+
+
+def set_flood_wait(phone, seconds):
+    seconds = max(0, int(seconds))
+    until = int(time.time()) + seconds
+
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            UPDATE tg_accounts
+            SET flood_wait_until = %s
+            WHERE phone = %s
+            """,
+            (until, str(phone))
+        )
+
+
+def clear_flood_wait(phone):
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            UPDATE tg_accounts
+            SET flood_wait_until = 0
+            WHERE phone = %s
+            """,
+            (str(phone),)
+        )
+
+
+# ============================================================
+# Telegram accounts — JSON / bool helpers
 # ============================================================
 
 def _json_dumps(value):
@@ -599,6 +1010,10 @@ def _int_or_none(value):
         return None
 
 
+# ============================================================
+# Telegram accounts — row to dict
+# ============================================================
+
 def _row_to_account(row):
     if not row:
         return None
@@ -608,10 +1023,12 @@ def _row_to_account(row):
     acc["session_string"] = decrypt_session(acc.get("session_string", ""))
     acc["selected_groups"] = _json_loads(acc.get("selected_groups"))
     acc["cached_groups"] = _json_loads(acc.get("cached_groups"))
+    acc["rescue_groups"] = _json_loads(acc.get("rescue_groups"))
 
     acc["meow_enabled"] = bool(acc.get("meow_enabled"))
     acc["pishi_enabled"] = bool(acc.get("pishi_enabled"))
     acc["fishing_enabled"] = bool(acc.get("fishing_enabled"))
+    acc["rescue_enabled"] = bool(acc.get("rescue_enabled"))
     acc["is_active"] = bool(acc.get("is_active"))
 
     acc["meow_next_run"] = int(float(acc.get("meow_next_run") or 0))
@@ -621,7 +1038,8 @@ def _row_to_account(row):
     acc["fishing_status_check_at"] = int(float(acc.get("fishing_status_check_at") or 0))
     acc["fishing_periodic_check_at"] = int(float(acc.get("fishing_periodic_check_at") or 0))
 
-    # New profile / backup fields
+    # UID / name / backup
+    acc["uid"] = acc.get("uid") or ""
     acc["account_name"] = acc.get("account_name") or ""
 
     try:
@@ -629,6 +1047,7 @@ def _row_to_account(row):
     except Exception:
         acc["in_backup_group"] = -1
 
+    # Profile fields
     acc["balance"] = int(float(acc.get("balance") or 0))
     acc["balance_rank"] = int(float(acc.get("balance_rank") or 0))
     acc["meow_count"] = int(float(acc.get("meow_count") or 0))
@@ -639,11 +1058,29 @@ def _row_to_account(row):
     acc["level_progress"] = acc.get("level_progress") or ""
     acc["profile_updated_at"] = int(float(acc.get("profile_updated_at") or 0))
 
+    # Pishi info fields
+    acc["pishi_rank_number"] = int(float(acc.get("pishi_rank_number") or 0))
+    acc["pishi_level_current"] = int(float(acc.get("pishi_level_current") or 0))
+    acc["pishi_level_max"] = int(float(acc.get("pishi_level_max") or 0))
+    acc["pishi_mps"] = int(float(acc.get("pishi_mps") or 0))
+    acc["pishi_capacity"] = int(float(acc.get("pishi_capacity") or 0))
+    acc["pishi_upgrade_cost"] = int(float(acc.get("pishi_upgrade_cost") or 0))
+    acc["pishi_info_updated_at"] = int(float(acc.get("pishi_info_updated_at") or 0))
+
+    # Session / reliability fields
+    acc["session_status"] = acc.get("session_status") or "unknown"
+    acc["last_error"] = acc.get("last_error") or ""
+    acc["flood_wait_until"] = int(float(acc.get("flood_wait_until") or 0))
+
     # Compatibility alias
     acc["fish_enabled"] = acc["pishi_enabled"]
 
     return acc
 
+
+# ============================================================
+# Telegram accounts — save / get / delete
+# ============================================================
 
 def save_tg_account(
     phone,
@@ -653,6 +1090,8 @@ def save_tg_account(
     meow_enabled=False,
     pishi_enabled=False,
     fishing_enabled=False,
+    rescue_enabled=None,
+    rescue_groups=None,
     is_active=False,
     cached_groups=None,
     meow_next_run=None,
@@ -662,6 +1101,8 @@ def save_tg_account(
     existing = get_tg_account(phone)
 
     if existing:
+        uid = existing.get("uid") or generate_unique_account_uid()
+
         if meow_next_run is None:
             meow_next_run = existing.get("meow_next_run", 0)
 
@@ -670,7 +1111,15 @@ def save_tg_account(
 
         if fishing_next_run is None:
             fishing_next_run = existing.get("fishing_next_run", 0)
+
+        if rescue_enabled is None:
+            rescue_enabled = existing.get("rescue_enabled", False)
+
+        if rescue_groups is None:
+            rescue_groups = existing.get("rescue_groups", [])
     else:
+        uid = generate_unique_account_uid()
+
         if meow_next_run is None:
             meow_next_run = 0
 
@@ -680,6 +1129,12 @@ def save_tg_account(
         if fishing_next_run is None:
             fishing_next_run = 0
 
+        if rescue_enabled is None:
+            rescue_enabled = False
+
+        if rescue_groups is None:
+            rescue_groups = []
+
     encrypted_session = encrypt_session(session_string)
 
     with get_db_cursor(commit=True) as cur:
@@ -687,26 +1142,32 @@ def save_tg_account(
             """
             INSERT INTO tg_accounts (
                 phone,
+                uid,
                 owner_id,
                 session_string,
                 selected_groups,
                 meow_enabled,
                 pishi_enabled,
                 fishing_enabled,
+                rescue_enabled,
+                rescue_groups,
                 is_active,
                 cached_groups,
                 meow_next_run,
                 pishi_next_run,
                 fishing_next_run
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (phone) DO UPDATE SET
+                uid = EXCLUDED.uid,
                 owner_id = EXCLUDED.owner_id,
                 session_string = EXCLUDED.session_string,
                 selected_groups = EXCLUDED.selected_groups,
                 meow_enabled = EXCLUDED.meow_enabled,
                 pishi_enabled = EXCLUDED.pishi_enabled,
                 fishing_enabled = EXCLUDED.fishing_enabled,
+                rescue_enabled = EXCLUDED.rescue_enabled,
+                rescue_groups = EXCLUDED.rescue_groups,
                 is_active = EXCLUDED.is_active,
                 cached_groups = EXCLUDED.cached_groups,
                 meow_next_run = EXCLUDED.meow_next_run,
@@ -715,12 +1176,15 @@ def save_tg_account(
             """,
             (
                 str(phone),
+                uid,
                 owner_id,
                 encrypted_session,
                 _json_dumps(selected_groups),
                 _bool(meow_enabled),
                 _bool(pishi_enabled),
                 _bool(fishing_enabled),
+                _bool(rescue_enabled),
+                _json_dumps(rescue_groups),
                 _bool(is_active),
                 _json_dumps(cached_groups),
                 int(float(meow_next_run or 0)),
@@ -733,6 +1197,22 @@ def save_tg_account(
 def get_tg_account(phone):
     with get_db_cursor(dict_cursor=True) as cur:
         cur.execute("SELECT * FROM tg_accounts WHERE phone = %s", (str(phone),))
+        row = cur.fetchone()
+
+    return _row_to_account(row)
+
+
+def get_tg_account_by_uid(uid):
+    with get_db_cursor(dict_cursor=True) as cur:
+        cur.execute(
+            """
+            SELECT *
+            FROM tg_accounts
+            WHERE uid = %s
+              AND uid <> ''
+            """,
+            (str(uid or ""),)
+        )
         row = cur.fetchone()
 
     return _row_to_account(row)
@@ -843,6 +1323,34 @@ def update_account_profile(
                 street_cats_rank,
                 level,
                 level_progress,
+                int(time.time()),
+                str(phone)
+            )
+        )
+
+
+def update_pishi_info(phone, data):
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            UPDATE tg_accounts
+            SET
+                pishi_rank_number = COALESCE(%s, pishi_rank_number),
+                pishi_level_current = COALESCE(%s, pishi_level_current),
+                pishi_level_max = COALESCE(%s, pishi_level_max),
+                pishi_mps = COALESCE(%s, pishi_mps),
+                pishi_capacity = COALESCE(%s, pishi_capacity),
+                pishi_upgrade_cost = COALESCE(%s, pishi_upgrade_cost),
+                pishi_info_updated_at = %s
+            WHERE phone = %s
+            """,
+            (
+                data.get("pishi_rank_number"),
+                data.get("pishi_level_current"),
+                data.get("pishi_level_max"),
+                data.get("pishi_mps"),
+                data.get("pishi_capacity"),
+                data.get("pishi_upgrade_cost"),
                 int(time.time()),
                 str(phone)
             )

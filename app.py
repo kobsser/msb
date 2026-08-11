@@ -15,7 +15,8 @@ from flask import (
     redirect,
     url_for,
     flash,
-    session
+    session,
+    jsonify
 )
 
 from config import SECRET_KEY
@@ -32,15 +33,19 @@ from database import (
     get_all_invites,
     save_tg_account,
     get_tg_account,
+    get_tg_account_by_uid,
     get_tg_accounts_for_user,
     delete_tg_account,
     get_setting,
     set_setting,
     get_all_settings,
+    get_setting_int,
     update_account_next_run,
-    update_account_meta,
-    set_backup_group_id,
-    reset_fishing_checks
+    reset_fishing_checks,
+    get_account_logs,
+    get_all_web_users_with_counts,
+    set_user_disabled,
+    mask_phone,
 )
 
 from clients import (
@@ -121,6 +126,37 @@ init_db()
 
 
 # ============================================================
+# Maintenance mode check
+# ============================================================
+
+@app.before_request
+def check_maintenance_mode():
+    # Always allow admin and static files
+    if request.path.startswith("/static"):
+        return None
+
+    try:
+        maintenance = get_setting_int("MAINTENANCE_MODE", 0)
+    except:
+        maintenance = 0
+
+    if maintenance != 1:
+        return None
+
+    # Allow admins through
+    if session.get("is_admin"):
+        return None
+
+    # Allow login/logout so admins can still access
+    allowed_endpoints = ("login", "logout", "static")
+
+    if request.endpoint in allowed_endpoints:
+        return None
+
+    return render_template("maintenance.html"), 503
+
+
+# ============================================================
 # Auth decorators
 # ============================================================
 
@@ -195,15 +231,18 @@ def finalize_new_account(phone, session_string):
                 meow_enabled=account["meow_enabled"],
                 pishi_enabled=account["pishi_enabled"],
                 fishing_enabled=account["fishing_enabled"],
+                rescue_enabled=account["rescue_enabled"],
+                rescue_groups=account["rescue_groups"],
                 is_active=account["is_active"],
                 cached_groups=groups
             )
 
-        # Fetch the account name once (when not in database)
+        # Fetch the account name once
         try:
             name = safe_run_async(session_manager.get_me_name(phone), timeout=30)
 
             if isinstance(name, str) and not is_error_result(name) and name.strip():
+                from database import update_account_meta
                 update_account_meta(phone, account_name=name.strip())
         except Exception:
             pass
@@ -233,6 +272,10 @@ def login():
         user = verify_web_user(username, password)
 
         if user:
+            if user.get("is_disabled"):
+                flash("حساب شما غیرفعال شده است", "danger")
+                return redirect(url_for("login"))
+
             session["user_id"] = user["id"]
             session["is_admin"] = bool(user["is_admin"])
             session["username"] = user["username"]
@@ -297,116 +340,18 @@ def dashboard():
     user = get_web_user_by_id(session["user_id"])
     backup_group_id = (user or {}).get("backup_group_id") or ""
 
+    total_balance = sum(acc.get("balance", 0) for acc in accounts)
+    active_count = sum(1 for acc in accounts if acc.get("is_active"))
+    error_count = sum(1 for acc in accounts if acc.get("session_status") == "error")
+
     return render_template(
         "dashboard.html",
         accounts=accounts,
-        backup_group_id=backup_group_id
+        backup_group_id=backup_group_id,
+        total_balance=total_balance,
+        active_count=active_count,
+        error_count=error_count
     )
-
-
-# ============================================================
-# Backup group / status / profile / transfer
-# ============================================================
-
-@app.route("/backup_group", methods=["POST"])
-@login_required
-def save_backup_group():
-    value = request.form.get("backup_group_id", "").strip()
-    normalized = normalize_group_id(value) if value else ""
-
-    user = get_web_user_by_id(session["user_id"])
-    old = (user or {}).get("backup_group_id") or ""
-
-    set_backup_group_id(session["user_id"], normalized or "")
-    
-    try:
-        workers.clear_backup_group_cache(session["user_id"])
-    except Exception:
-        pass
-
-    if normalized and normalized != old:
-        # Automatically check membership once when the backup group changes
-        result = safe_run_async(
-            workers.update_status_for_user(session["user_id"]),
-            timeout=110
-        )
-
-        if is_error_result(result):
-            flash("گروه بکاپ ذخیره شد؛ بررسی وضعیت در پس‌زمینه ادامه دارد", "warning")
-        else:
-            flash("گروه بکاپ ذخیره شد و وضعیت اکانت‌ها بررسی شد", "success")
-    else:
-        flash("گروه بکاپ ذخیره شد", "success")
-
-    return redirect(url_for("dashboard"))
-
-
-@app.route("/update_status", methods=["POST"])
-@login_required
-def update_status():
-    result = safe_run_async(
-        workers.update_status_for_user(session["user_id"]),
-        timeout=110
-    )
-
-    if is_error_result(result):
-        flash("بروزرسانی در پس‌زمینه ادامه دارد", "warning")
-    else:
-        flash("نام و وضعیت گروه بکاپ اکانت‌ها بروزرسانی شد", "success")
-
-    return redirect(url_for("dashboard"))
-
-
-@app.route("/update_profiles", methods=["POST"])
-@login_required
-def update_profiles():
-    user = get_web_user_by_id(session["user_id"])
-    backup_group_id = (user or {}).get("backup_group_id") or ""
-
-    if not backup_group_id:
-        flash("ابتدا آیدی گروه بکاپ را تنظیم کنید", "danger")
-        return redirect(url_for("dashboard"))
-
-    result = safe_run_async(
-        workers.update_profiles_for_user(session["user_id"]),
-        timeout=110
-    )
-
-    if is_error_result(result):
-        flash("بروزرسانی میوهام در پس‌زمینه ادامه دارد", "warning")
-    else:
-        flash("اطلاعات اکانت‌ها (میوهام) بروزرسانی شد", "success")
-
-    return redirect(url_for("dashboard"))
-
-
-@app.route("/transfer", methods=["POST"])
-@login_required
-def transfer():
-    user = get_web_user_by_id(session["user_id"])
-    backup_group_id = (user or {}).get("backup_group_id") or ""
-
-    if not backup_group_id:
-        flash("ابتدا آیدی گروه بکاپ را تنظیم کنید", "danger")
-        return redirect(url_for("dashboard"))
-
-    target = str(request.form.get("target_user_id", "")).strip().translate(FA_DIGITS)
-
-    if not re.fullmatch(r"\d+", target):
-        flash("آیدی کاربر نامعتبر است", "danger")
-        return redirect(url_for("dashboard"))
-
-    result = safe_run_async(
-        workers.transfer_for_user(session["user_id"], target),
-        timeout=110
-    )
-
-    if is_error_result(result):
-        flash("انتقال در پس‌زمینه ادامه دارد", "warning")
-    else:
-        flash("دستور انتقال برای اکانت‌ها ارسال شد", "success")
-
-    return redirect(url_for("dashboard"))
 
 
 # ============================================================
@@ -494,17 +439,19 @@ def verify_password():
 
 
 # ============================================================
-# Account settings
+# Account settings (UID-based)
 # ============================================================
 
-@app.route("/account/<phone>/reset_timers", methods=["POST"])
+@app.route("/account/<uid>/reset_timers", methods=["POST"])
 @login_required
-def reset_timers(phone):
-    account = get_tg_account(phone)
+def reset_timers(uid):
+    account = get_tg_account_by_uid(uid)
 
     if not account or account["owner_id"] != session["user_id"]:
         flash("اکانت پیدا نشد", "danger")
         return redirect(url_for("dashboard"))
+
+    phone = account["phone"]
 
     update_account_next_run(
         phone,
@@ -517,13 +464,13 @@ def reset_timers(phone):
 
     flash("تایمرها ریست شدند", "success")
 
-    return redirect(url_for("account_settings", phone=phone))
+    return redirect(url_for("account_settings", uid=uid))
 
 
-@app.route("/account/<phone>")
+@app.route("/account/<uid>")
 @login_required
-def account_settings(phone):
-    account = get_tg_account(phone)
+def account_settings(uid):
+    account = get_tg_account_by_uid(uid)
 
     if not account or account["owner_id"] != session["user_id"]:
         flash("اکانت پیدا نشد", "danger")
@@ -532,13 +479,15 @@ def account_settings(phone):
     return render_template("account_settings.html", acc=account)
 
 
-@app.route("/account/<phone>/save", methods=["POST"])
+@app.route("/account/<uid>/save", methods=["POST"])
 @login_required
-def save_account_settings(phone):
-    account = get_tg_account(phone)
+def save_account_settings(uid):
+    account = get_tg_account_by_uid(uid)
 
     if not account or account["owner_id"] != session["user_id"]:
         return redirect(url_for("dashboard"))
+
+    phone = account["phone"]
 
     selected_raw = request.form.getlist("groups")
 
@@ -554,9 +503,25 @@ def save_account_settings(phone):
         if normalized and normalized not in selected:
             selected.append(normalized)
 
+    # Rescue groups (separate list)
+    rescue_raw = request.form.getlist("rescue_groups")
+
+    manual_rescue_id = request.form.get("manual_rescue_group_id", "").strip()
+    if manual_rescue_id:
+        rescue_raw.append(manual_rescue_id)
+
+    rescue_groups = []
+
+    for group_id in rescue_raw:
+        normalized = normalize_group_id(group_id)
+
+        if normalized and normalized not in rescue_groups:
+            rescue_groups.append(normalized)
+
     meow = request.form.get("meow_enabled") == "on"
     pishi = request.form.get("pishi_enabled") == "on"
     fishing = request.form.get("fishing_enabled") == "on"
+    rescue = request.form.get("rescue_enabled") == "on"
 
     save_tg_account(
         phone=phone,
@@ -566,6 +531,8 @@ def save_account_settings(phone):
         meow_enabled=meow,
         pishi_enabled=pishi,
         fishing_enabled=fishing,
+        rescue_enabled=rescue,
+        rescue_groups=rescue_groups,
         is_active=account["is_active"],
         cached_groups=account["cached_groups"]
     )
@@ -574,17 +541,18 @@ def save_account_settings(phone):
         workers.start_worker(phone, LOOP)
 
     flash("تنظیمات ذخیره شد", "success")
-    return redirect(url_for("account_settings", phone=phone))
+    return redirect(url_for("account_settings", uid=uid))
 
 
-@app.route("/account/<phone>/toggle", methods=["POST"])
+@app.route("/account/<uid>/toggle", methods=["POST"])
 @login_required
-def toggle_account(phone):
-    account = get_tg_account(phone)
+def toggle_account(uid):
+    account = get_tg_account_by_uid(uid)
 
     if not account or account["owner_id"] != session["user_id"]:
         return redirect(url_for("dashboard"))
 
+    phone = account["phone"]
     new_state = not account["is_active"]
 
     save_tg_account(
@@ -595,6 +563,8 @@ def toggle_account(phone):
         meow_enabled=account["meow_enabled"],
         pishi_enabled=account["pishi_enabled"],
         fishing_enabled=account["fishing_enabled"],
+        rescue_enabled=account["rescue_enabled"],
+        rescue_groups=account["rescue_groups"],
         is_active=new_state,
         cached_groups=account["cached_groups"]
     )
@@ -607,26 +577,31 @@ def toggle_account(phone):
     return redirect(url_for("dashboard"))
 
 
-@app.route("/account/<phone>/delete", methods=["POST"])
+@app.route("/account/<uid>/delete", methods=["POST"])
 @login_required
-def delete_account(phone):
-    account = get_tg_account(phone)
+def delete_account(uid):
+    account = get_tg_account_by_uid(uid)
 
     if account and account["owner_id"] == session["user_id"]:
+        phone = account["phone"]
+
         workers.stop_worker(phone, LOOP)
         delete_tg_account(phone, session["user_id"])
+
         flash("اکانت حذف شد", "success")
 
     return redirect(url_for("dashboard"))
 
 
-@app.route("/account/<phone>/refresh_groups", methods=["POST"])
+@app.route("/account/<uid>/refresh_groups", methods=["POST"])
 @login_required
-def refresh_groups(phone):
-    account = get_tg_account(phone)
+def refresh_groups(uid):
+    account = get_tg_account_by_uid(uid)
 
     if not account or account["owner_id"] != session["user_id"]:
         return redirect(url_for("dashboard"))
+
+    phone = account["phone"]
 
     groups = safe_run_async(
         session_manager.get_groups_managed(phone),
@@ -642,6 +617,8 @@ def refresh_groups(phone):
             meow_enabled=account["meow_enabled"],
             pishi_enabled=account["pishi_enabled"],
             fishing_enabled=account["fishing_enabled"],
+            rescue_enabled=account["rescue_enabled"],
+            rescue_groups=account["rescue_groups"],
             is_active=account["is_active"],
             cached_groups=groups
         )
@@ -650,7 +627,221 @@ def refresh_groups(phone):
     else:
         flash(f"خطا: {groups}", "danger")
 
-    return redirect(url_for("account_settings", phone=phone))
+    return redirect(url_for("account_settings", uid=uid))
+
+
+# ============================================================
+# Account logs (UID-based)
+# ============================================================
+
+@app.route("/account/<uid>/logs")
+@login_required
+def account_logs(uid):
+    account = get_tg_account_by_uid(uid)
+
+    if not account or account["owner_id"] != session["user_id"]:
+        flash("اکانت پیدا نشد", "danger")
+        return redirect(url_for("dashboard"))
+
+    logs = get_account_logs(uid, limit=200)
+
+    return render_template("account_logs.html", acc=account, logs=logs)
+
+
+# ============================================================
+# Account phone reveal (UID-based)
+# ============================================================
+
+@app.route("/account/<uid>/phone")
+@login_required
+def reveal_phone(uid):
+    account = get_tg_account_by_uid(uid)
+
+    if not account or account["owner_id"] != session["user_id"]:
+        return jsonify({"phone": "***"}), 403
+
+    return jsonify({"phone": account["phone"]})
+
+
+# ============================================================
+# Backup group / status / profile / transfer
+# ============================================================
+
+@app.route("/backup_group", methods=["POST"])
+@login_required
+def save_backup_group():
+    value = request.form.get("backup_group_id", "").strip()
+    normalized = normalize_group_id(value) if value else ""
+
+    user = get_web_user_by_id(session["user_id"])
+    old = (user or {}).get("backup_group_id") or ""
+
+    from database import set_backup_group_id
+    set_backup_group_id(session["user_id"], normalized or "")
+
+    try:
+        workers.clear_backup_group_cache(session["user_id"])
+    except Exception:
+        pass
+
+    if normalized and normalized != old:
+        result = safe_run_async(
+            workers.update_status_for_user(session["user_id"]),
+            timeout=110
+        )
+
+        if is_error_result(result):
+            flash("گروه بکاپ ذخیره شد؛ بررسی وضعیت در پس‌زمینه ادامه دارد", "warning")
+        else:
+            flash("گروه بکاپ ذخیره شد و وضعیت اکانت‌ها بررسی شد", "success")
+    else:
+        flash("گروه بکاپ ذخیره شد", "success")
+
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/update_status", methods=["POST"])
+@login_required
+def update_status():
+    result = safe_run_async(
+        workers.update_status_for_user(session["user_id"]),
+        timeout=110
+    )
+
+    if is_error_result(result):
+        flash("بروزرسانی در پس‌زمینه ادامه دارد", "warning")
+    else:
+        flash("نام و وضعیت گروه بکاپ اکانت‌ها بروزرسانی شد", "success")
+
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/update_profiles", methods=["POST"])
+@login_required
+def update_profiles():
+    user = get_web_user_by_id(session["user_id"])
+    backup_group_id = (user or {}).get("backup_group_id") or ""
+
+    if not backup_group_id:
+        flash("ابتدا آیدی گروه بکاپ را تنظیم کنید", "danger")
+        return redirect(url_for("dashboard"))
+
+    result = safe_run_async(
+        workers.update_profiles_for_user(session["user_id"]),
+        timeout=110
+    )
+
+    if is_error_result(result):
+        flash("بروزرسانی میوهام در پس‌زمینه ادامه دارد", "warning")
+    else:
+        flash("اطلاعات اکانت‌ها (میوهام) بروزرسانی شد", "success")
+
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/transfer", methods=["POST"])
+@login_required
+def transfer():
+    user = get_web_user_by_id(session["user_id"])
+    backup_group_id = (user or {}).get("backup_group_id") or ""
+
+    if not backup_group_id:
+        flash("ابتدا آیدی گروه بکاپ را تنظیم کنید", "danger")
+        return redirect(url_for("dashboard"))
+
+    target = str(request.form.get("target_user_id", "")).strip().translate(FA_DIGITS)
+
+    if not re.fullmatch(r"\d+", target):
+        flash("آیدی کاربر نامعتبر است", "danger")
+        return redirect(url_for("dashboard"))
+
+    result = safe_run_async(
+        workers.transfer_for_user(session["user_id"], target),
+        timeout=110
+    )
+
+    if is_error_result(result):
+        flash("انتقال در پس‌زمینه ادامه دارد", "warning")
+    else:
+        flash("دستور انتقال برای اکانت‌ها ارسال شد", "success")
+
+    return redirect(url_for("dashboard"))
+
+
+# ============================================================
+# Bulk actions
+# ============================================================
+
+@app.route("/bulk_start", methods=["POST"])
+@login_required
+def bulk_start():
+    uids = request.form.getlist("uids[]")
+
+    count = 0
+
+    for uid in uids:
+        account = get_tg_account_by_uid(uid)
+
+        if not account or account["owner_id"] != session["user_id"]:
+            continue
+
+        phone = account["phone"]
+
+        save_tg_account(
+            phone=phone,
+            owner_id=account["owner_id"],
+            session_string=account["session_string"],
+            selected_groups=account["selected_groups"],
+            meow_enabled=account["meow_enabled"],
+            pishi_enabled=account["pishi_enabled"],
+            fishing_enabled=account["fishing_enabled"],
+            rescue_enabled=account["rescue_enabled"],
+            rescue_groups=account["rescue_groups"],
+            is_active=True,
+            cached_groups=account["cached_groups"]
+        )
+
+        workers.start_worker(phone, LOOP)
+        count += 1
+
+    flash(f"{count} اکانت فعال شد", "success")
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/bulk_stop", methods=["POST"])
+@login_required
+def bulk_stop():
+    uids = request.form.getlist("uids[]")
+
+    count = 0
+
+    for uid in uids:
+        account = get_tg_account_by_uid(uid)
+
+        if not account or account["owner_id"] != session["user_id"]:
+            continue
+
+        phone = account["phone"]
+
+        save_tg_account(
+            phone=phone,
+            owner_id=account["owner_id"],
+            session_string=account["session_string"],
+            selected_groups=account["selected_groups"],
+            meow_enabled=account["meow_enabled"],
+            pishi_enabled=account["pishi_enabled"],
+            fishing_enabled=account["fishing_enabled"],
+            rescue_enabled=account["rescue_enabled"],
+            rescue_groups=account["rescue_groups"],
+            is_active=False,
+            cached_groups=account["cached_groups"]
+        )
+
+        workers.stop_worker(phone, LOOP)
+        count += 1
+
+    flash(f"{count} اکانت غیرفعال شد", "success")
+    return redirect(url_for("dashboard"))
 
 
 # ============================================================
@@ -746,21 +937,6 @@ EDITABLE_SETTINGS = [
         "type": "text"
     },
     {
-        "key": "TRANSFER_CONFIRM_TIMEOUT",
-        "label": "Transfer confirmation message timeout (seconds)",
-        "type": "number"
-    },
-    {
-        "key": "TRANSFER_CONFIRM_EDIT_TIMEOUT",
-        "label": "Transfer success edit timeout (seconds)",
-        "type": "number"
-    },
-    {
-        "key": "TRANSFER_CONFIRM_MAX_RETRIES",
-        "label": "Transfer confirmation max retries",
-        "type": "number"
-    },
-    {
         "key": "USER_JOB_CONCURRENCY",
         "label": "Concurrent account jobs (default 3)",
         "type": "number"
@@ -778,6 +954,21 @@ EDITABLE_SETTINGS = [
     {
         "key": "TRANSFER_CONCURRENCY",
         "label": "Transfer concurrency (0 or empty = global)",
+        "type": "number"
+    },
+    {
+        "key": "TRANSFER_CONFIRM_TIMEOUT",
+        "label": "Transfer confirmation message timeout (seconds)",
+        "type": "number"
+    },
+    {
+        "key": "TRANSFER_CONFIRM_EDIT_TIMEOUT",
+        "label": "Transfer success edit timeout (seconds)",
+        "type": "number"
+    },
+    {
+        "key": "TRANSFER_CONFIRM_MAX_RETRIES",
+        "label": "Transfer confirmation max retries",
         "type": "number"
     },
     {
@@ -852,6 +1043,79 @@ def admin_settings():
         settings=settings,
         editable_settings=EDITABLE_SETTINGS
     )
+
+
+# ============================================================
+# Admin automation toggles
+# ============================================================
+
+GLOBAL_TOGGLE_ITEMS = [
+    ("GLOBAL_AUTOMATION_ENABLED", "Master Automation"),
+    ("GLOBAL_MEOW_ENABLED", "Meow"),
+    ("GLOBAL_PISHI_ENABLED", "Pishi"),
+    ("GLOBAL_FISHING_ENABLED", "Fishing"),
+    ("GLOBAL_RESCUE_ENABLED", "Rescue"),
+    ("GLOBAL_TRANSFER_ENABLED", "Transfer"),
+    ("MAINTENANCE_MODE", "Maintenance Mode"),
+]
+
+
+@app.route("/admin/automation", methods=["GET", "POST"])
+@admin_required
+def admin_automation():
+    if request.method == "POST":
+        for key, label in GLOBAL_TOGGLE_ITEMS:
+            enabled = request.form.get(key) == "on"
+            set_setting(key, "1" if enabled else "0")
+
+        flash("Automation toggles saved", "success")
+        return redirect(url_for("admin_automation"))
+
+    states = {}
+
+    for key, label in GLOBAL_TOGGLE_ITEMS:
+        states[key] = get_setting_int(key, 1 if key != "MAINTENANCE_MODE" else 0)
+
+    return render_template(
+        "admin_automation.html",
+        items=GLOBAL_TOGGLE_ITEMS,
+        states=states
+    )
+
+
+# ============================================================
+# Admin users
+# ============================================================
+
+@app.route("/admin/users")
+@admin_required
+def admin_users():
+    users = get_all_web_users_with_counts()
+    return render_template("admin_users.html", users=users)
+
+
+@app.route("/admin/users/<int:user_id>/toggle_disabled", methods=["POST"])
+@admin_required
+def toggle_user_disabled(user_id):
+    if user_id == session.get("user_id"):
+        flash("شما نمی‌توانید خودتان را غیرفعال کنید", "danger")
+        return redirect(url_for("admin_users"))
+
+    user = get_web_user_by_id(user_id)
+
+    if not user:
+        flash("کاربر پیدا نشد", "danger")
+        return redirect(url_for("admin_users"))
+
+    new_state = not user.get("is_disabled", False)
+    set_user_disabled(user_id, new_state)
+
+    if new_state:
+        flash(f"کاربر {user['username']} غیرفعال شد", "success")
+    else:
+        flash(f"کاربر {user['username']} فعال شد", "success")
+
+    return redirect(url_for("admin_users"))
 
 
 # ============================================================

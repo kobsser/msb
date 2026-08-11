@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Automation{% endblock %}
+{% block content %}
+<div class="card bg-base-100 shadow-xl max-w-3xl mx-auto">
+    <div class="card-body">
+        <h2 class="card-title text-2xl mb-2">
+            🎛️ Global Automation
+        </h2>
+        <p class="text-sm opacity-60 mb-4">
+            This panel controls global feature toggles separately from per-account settings.
+        </p>
+
+        <form method="POST">
+            <div class="flex flex-col gap-4">
+                {% for key, label in items %}
+                <div class="form-control">
+                    <label class="cursor-pointer label justify-start gap-3 p-0">
+                        <input type="checkbox" name="{{ key }}" class="toggle toggle-primary"
+                            {% if states.get(key) %}checked{% endif %}>
+                        <span class="label-text font-bold text-lg">{{ label }}</span>
+                    </label>
+                </div>
+                {% endfor %}
+            </div>
+
+            <button type="submit" class="btn btn-primary w-full mt-6">
+                Save Automation Settings
+            </button>
+        </form>
+    </div>
+</div>
+{% endblock %}
