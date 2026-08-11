@@ -57,6 +57,14 @@ MEOW_CLICK_TASKS = {}
 ACCOUNT_SELF_IDS = {}
 REPLY_OWNER_CACHE = {}
 
+RESCUE_CALLBACK_PREFIX = "rescue_cat"
+
+RESCUE_TASKS = {}
+RESCUE_FINISHED_MESSAGES = set()
+
+BACKUP_GROUP_CACHE = {}
+BACKUP_GROUP_CACHE_TTL = 60
+
 TRANSFER_CONFIRM_PREFIX = "tr_confirm"
 TRANSFER_SUCCESS_TOKEN = "موفقیت"
 
@@ -478,7 +486,6 @@ def _find_transfer_confirm_button(message):
 async def _click_button_once(message, button):
     """
     Clicks a button once, with coordinate fallback.
-    Retries are handled by the transfer confirmation loop.
     """
     callback_data = getattr(button, "callback_data", None)
 
@@ -494,7 +501,7 @@ async def _click_button_once(message, button):
             error_text = str(e).lower()
 
             if "doesn't exist" not in error_text:
-                print(f"⚠️ Transfer confirm click error: {e}")
+                print(f"⚠️ Button click error: {e}")
 
     try:
         await message.click(
@@ -512,7 +519,7 @@ async def _click_button_once(message, button):
             return True
 
         except Exception as e:
-            print(f"❌ Transfer confirm click failed: {e}")
+            print(f"❌ Button click failed: {e}")
             return False
 
 
@@ -949,6 +956,161 @@ async def _run_concurrent_account_jobs(jobs, concurrency: int):
 # Button helpers
 # ============================================================
 
+def clear_backup_group_cache(owner_id=None):
+    """
+    Clears cached backup group IDs.
+    Call this when a user changes their backup group.
+    """
+    if owner_id is None:
+        BACKUP_GROUP_CACHE.clear()
+    else:
+        BACKUP_GROUP_CACHE.pop(owner_id, None)
+
+
+def _get_backup_chat_id_for_account(account):
+    """
+    Returns the backup group chat ID for this account's owner.
+    """
+    owner_id = account.get("owner_id")
+
+    if owner_id is None:
+        return None
+
+    now = time.time()
+    cached = BACKUP_GROUP_CACHE.get(owner_id)
+
+    if cached and now - cached[1] < BACKUP_GROUP_CACHE_TTL:
+        return cached[0]
+
+    try:
+        web_user = get_web_user_by_id(owner_id)
+        backup_raw = (web_user or {}).get("backup_group_id") or ""
+
+        if backup_raw:
+            backup_int = int(backup_raw)
+        else:
+            backup_int = None
+
+    except Exception:
+        backup_int = None
+
+    BACKUP_GROUP_CACHE[owner_id] = (backup_int, now)
+
+    return backup_int
+
+
+def _find_rescue_button(message):
+    """
+    Finds a button whose callback_data starts with "rescue_cat".
+    """
+    reply_markup = getattr(message, "reply_markup", None)
+    if not reply_markup:
+        return None
+
+    rows = getattr(reply_markup, "inline_keyboard", None)
+    if not rows:
+        return None
+
+    for row_index, row in enumerate(rows):
+        if not row:
+            continue
+
+        for col_index, button in enumerate(row):
+            callback_data = optimizations.normalize_callback_data(
+                getattr(button, "callback_data", None)
+            )
+
+            if callback_data.startswith(RESCUE_CALLBACK_PREFIX):
+                button._row_index = row_index
+                button._col_index = col_index
+                return button
+
+    return None
+
+
+async def _rescue_click_loop(client, phone, message, msg_key: str):
+    """
+    Keeps clicking the rescue_cat button until:
+    - button is removed
+    - message disappears
+    - max click limit is reached
+    """
+    cancelled = False
+
+    try:
+        max_clicks = max(1, setting_int("RESCUE_MAX_CLICKS", 15))
+
+        first_delay = max(0.0, setting_float("RESCUE_FIRST_CLICK_DELAY", 0.1))
+        fast_min_delay = max(0.0, setting_float("RESCUE_FAST_CLICK_MIN_DELAY", 0.10))
+        fast_max_delay = max(fast_min_delay, setting_float("RESCUE_FAST_CLICK_MAX_DELAY", 0.25))
+        normal_delay = max(0.0, setting_float("RESCUE_NORMAL_CLICK_DELAY", 1.0))
+
+        chat_id = message.chat.id
+        message_id = message.id
+        current_message = message
+
+        for click_number in range(1, max_clicks + 1):
+            # Delay schedule
+            if click_number == 1:
+                await asyncio.sleep(first_delay)
+            elif click_number <= 4:
+                await asyncio.sleep(random.uniform(fast_min_delay, fast_max_delay))
+            else:
+                await asyncio.sleep(normal_delay)
+
+            # Refresh message to check if button still exists
+            try:
+                fresh_message = await client.get_messages(chat_id, message_id)
+            except Exception:
+                fresh_message = None
+
+            if not fresh_message:
+                print(f"🐈 [{msg_key}] Rescue stopped: message unavailable")
+                break
+
+            current_message = fresh_message
+            rescue_button = _find_rescue_button(current_message)
+
+            if not rescue_button:
+                print(f"🐈 [{msg_key}] Rescue stopped: button removed")
+                break
+
+            clicked = await _click_button_once(current_message, rescue_button)
+
+            if clicked:
+                print(f"🐈 [{msg_key}] Rescue click {click_number}/{max_clicks}")
+            else:
+                # Click failed; refresh once more and stop if button is gone
+                try:
+                    fresh_message = await client.get_messages(chat_id, message_id)
+                except Exception:
+                    fresh_message = None
+
+                if not fresh_message:
+                    break
+
+                if not _find_rescue_button(fresh_message):
+                    print(f"🐈 [{msg_key}] Rescue stopped after failed click: button removed")
+                    break
+
+        print(f"🐈 [{msg_key}] Rescue loop finished")
+
+    except asyncio.CancelledError:
+        cancelled = True
+        return
+
+    except Exception as e:
+        print(f"❌ rescue_click_loop error [{msg_key}]: {e}")
+
+    finally:
+        if RESCUE_TASKS.get(msg_key) is asyncio.current_task():
+            RESCUE_TASKS.pop(msg_key, None)
+
+        # If cancelled because worker stopped, do not mark it permanently finished.
+        if not cancelled:
+            _remember_clicked(RESCUE_FINISHED_MESSAGES, msg_key)
+
+
 async def click_inline_button(message, button, row_index, col_index):
     max_retries = setting_int("BUTTON_CLICK_MAX_RETRIES", 10)
     max_retries = max(1, int(max_retries))
@@ -1254,6 +1416,42 @@ async def handle_bot_message(client, phone: str, message):
 
         if not user or not user.get("is_active"):
             return
+
+        # ============================================================
+        # NEW: Rescue cat handler
+        #
+        # Conditions:
+        # - message is NOT a reply
+        # - message has a button whose callback_data starts with rescue_cat
+        # - chat is one of selected groups OR the user's backup group
+        # ============================================================
+        if not getattr(message, "reply_to_message_id", None):
+            rescue_button = _find_rescue_button(message)
+
+            if rescue_button:
+                allowed_chat_ids = set(get_selected_chat_ids(user))
+
+                backup_chat_id = _get_backup_chat_id_for_account(user)
+                if backup_chat_id:
+                    allowed_chat_ids.add(backup_chat_id)
+
+                if message.chat.id in allowed_chat_ids:
+                    msg_key = f"{phone}:{message.chat.id}:{message.id}"
+
+                    if msg_key not in RESCUE_FINISHED_MESSAGES:
+                        existing_task = RESCUE_TASKS.get(msg_key)
+
+                        if not existing_task or existing_task.done():
+                            RESCUE_TASKS[msg_key] = asyncio.create_task(
+                                _rescue_click_loop(client, phone, message, msg_key)
+                            )
+
+                # Rescue messages should not be processed by normal logic
+                return
+
+        # ============================================================
+        # Existing normal logic continues below
+        # ============================================================
 
         if not optimizations.message_is_from_selected_group(message, user.get("selected_groups", [])):
             return
@@ -1624,7 +1822,7 @@ async def smart_scheduler_loop(client, phone: str):
 # ============================================================
 
 def _cancel_phone_click_tasks(phone: str):
-    for task_dict in (FISHING_CLICK_TASKS, PISHI_CLICK_TASKS, MEOW_CLICK_TASKS):
+    for task_dict in (FISHING_CLICK_TASKS, PISHI_CLICK_TASKS, MEOW_CLICK_TASKS, RESCUE_TASKS):
         for key, task in list(task_dict.items()):
             if key.startswith(phone + ":"):
                 try:

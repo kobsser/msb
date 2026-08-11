@@ -59,6 +59,13 @@ DEFAULT_SETTINGS = {
 
     # Concurrent account jobs
     "USER_JOB_CONCURRENCY": "3",
+
+    # Rescue cat
+    "RESCUE_MAX_CLICKS": "15",
+    "RESCUE_FIRST_CLICK_DELAY": "0.1",
+    "RESCUE_FAST_CLICK_MIN_DELAY": "0.10",
+    "RESCUE_FAST_CLICK_MAX_DELAY": "0.25",
+    "RESCUE_NORMAL_CLICK_DELAY": "1.0",
 }
 
 

@@ -318,6 +318,11 @@ def save_backup_group():
     old = (user or {}).get("backup_group_id") or ""
 
     set_backup_group_id(session["user_id"], normalized or "")
+    
+    try:
+        workers.clear_backup_group_cache(session["user_id"])
+    except Exception:
+        pass
 
     if normalized and normalized != old:
         # Automatically check membership once when the backup group changes
@@ -774,6 +779,31 @@ EDITABLE_SETTINGS = [
         "key": "TRANSFER_CONCURRENCY",
         "label": "Transfer concurrency (0 or empty = global)",
         "type": "number"
+    },
+    {
+        "key": "RESCUE_MAX_CLICKS",
+        "label": "Rescue cat max clicks",
+        "type": "number"
+    },
+    {
+        "key": "RESCUE_FIRST_CLICK_DELAY",
+        "label": "Rescue cat first click delay (seconds)",
+        "type": "float"
+    },
+    {
+        "key": "RESCUE_FAST_CLICK_MIN_DELAY",
+        "label": "Rescue cat fast click min delay (seconds)",
+        "type": "float"
+    },
+    {
+        "key": "RESCUE_FAST_CLICK_MAX_DELAY",
+        "label": "Rescue cat fast click max delay (seconds)",
+        "type": "float"
+    },
+    {
+        "key": "RESCUE_NORMAL_CLICK_DELAY",
+        "label": "Rescue cat normal delay after first 4 clicks (seconds)",
+        "type": "float"
     },
 ]
 
