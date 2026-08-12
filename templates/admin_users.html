@@ -1,74 +1,51 @@
 {% extends "base.html" %}
 {% block title %}Users{% endblock %}
 {% block content %}
-<div class="card bg-base-100 shadow-xl">
-    <div class="card-body">
-        <h2 class="card-title text-2xl mb-4">
-            👥 Users
+<div class="glass-card rounded-2xl overflow-hidden">
+    <div class="p-6 border-b border-base-content/5">
+        <h2 class="text-xl font-bold flex items-center gap-2">
+            <i data-lucide="users" class="w-5 h-5 text-primary"></i>
+            Users
         </h2>
+    </div>
 
-        <div class="overflow-x-auto">
-            <table class="table table-zebra">
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>Username</th>
-                        <th>Accounts</th>
-                        <th>Admin</th>
-                        <th>Status</th>
-                        <th>Created</th>
-                        <th>Action</th>
-                    </tr>
-                </thead>
-
-                <tbody>
-                    {% for user in users %}
-                    <tr>
-                        <td>{{ user.id }}</td>
-                        <td class="font-bold">{{ user.username }}</td>
-                        <td>
-                            <span class="badge badge-ghost">{{ user.accounts_count }}</span>
-                        </td>
-                        <td>
-                            {% if user.is_admin %}
-                            <span class="badge badge-primary">admin</span>
-                            {% else %}
-                            <span class="badge badge-ghost">user</span>
-                            {% endif %}
-                        </td>
-                        <td>
-                            {% if user.is_disabled %}
-                            <span class="badge badge-error">disabled</span>
-                            {% else %}
-                            <span class="badge badge-success">active</span>
-                            {% endif %}
-                        </td>
-                        <td class="text-sm opacity-60 whitespace-nowrap">
-                            {{ user.created_at }}
-                        </td>
-                        <td>
-                            <form method="POST" action="{{ url_for('toggle_user_disabled', user_id=user.id) }}">
-                                <button type="submit" class="btn btn-outline btn-sm"
-                                    onclick="return confirm('Are you sure you want to change this user\'s status?');">
-                                    {% if user.is_disabled %}
-                                    Enable
-                                    {% else %}
-                                    Disable
-                                    {% endif %}
-                                </button>
-                            </form>
-                        </td>
-                    </tr>
-                    {% else %}
-                    <tr>
-                        <td colspan="7" class="text-center opacity-60 py-6">
-                            No users found.
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
+    <div class="p-6 overflow-x-auto">
+        <table class="table table-sm">
+            <thead>
+                <tr class="text-xs opacity-50">
+                    <th>ID</th>
+                    <th>Username</th>
+                    <th>Accounts</th>
+                    <th>Role</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user in users %}
+                <tr class="hover:bg-base-200/50 transition-colors">
+                    <td class="text-xs opacity-50 font-mono">{{ user.id }}</td>
+                    <td class="font-medium text-sm">{{ user.username }}</td>
+                    <td><span class="badge badge-ghost badge-sm">{{ user.accounts_count }}</span></td>
+                    <td>
+                        {% if user.is_admin %}<span class="badge badge-primary badge-sm">admin</span>
+                        {% else %}<span class="badge badge-ghost badge-sm">user</span>{% endif %}
+                    </td>
+                    <td>
+                        {% if user.is_disabled %}<span class="badge badge-error badge-sm">disabled</span>
+                        {% else %}<span class="badge badge-success badge-sm">active</span>{% endif %}
+                    </td>
+                    <td>
+                        <form method="POST" action="{{ url_for('toggle_user_disabled', user_id=user.id) }}">
+                            <button type="submit" class="btn btn-outline btn-xs">
+                                {{ 'Enable' if user.is_disabled else 'Disable' }}
+                            </button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 {% endblock %}

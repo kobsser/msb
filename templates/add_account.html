@@ -1,25 +1,31 @@
 {% extends "base.html" %}
 {% block title %}افزودن اکانت{% endblock %}
 {% block content %}
-<div class="flex justify-center">
-    <div class="card w-full max-w-md bg-base-100 shadow-xl mt-8">
-        <div class="card-body">
-            <h2 class="card-title justify-center text-2xl mb-4">افزودن اکانت تلگرام</h2>
-            <form method="POST">
-                <div class="form-control w-full mb-4">
-                    <label class="label">
-                        <span class="label-text">شماره تلفن (با کد کشور)</span>
-                    </label>
-                    <input type="text" name="phone" placeholder="+989123456789" required 
-                           class="input input-bordered w-full" dir="ltr" />
-                </div>
+<div class="flex justify-center items-center min-h-[60vh]">
+    <div class="w-full max-w-sm">
+        <div class="text-center mb-6">
+            <div class="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-3">
+                <i data-lucide="plus-circle" class="w-7 h-7 text-primary"></i>
+            </div>
+            <h1 class="text-xl font-bold">افزودن اکانت تلگرام</h1>
+            <p class="text-xs opacity-50 mt-1">شماره تلفن خود را وارد کنید</p>
+        </div>
 
-                <button type="submit" class="btn btn-primary w-full">دریافت کد تایید</button>
-
-                <div class="text-center mt-4">
-                    <a href="{{ url_for('dashboard') }}" class="link link-hover text-sm">بازگشت</a>
+        <div class="glass-card rounded-2xl p-6">
+            <form method="POST" class="space-y-4">
+                <div class="form-control">
+                    <label class="label pb-1"><span class="label-text text-xs font-medium opacity-60">شماره تلفن (با کد کشور)</span></label>
+                    <input type="text" name="phone" placeholder="+989123456789" class="input input-bordered w-full bg-base-200/50" dir="ltr" required>
                 </div>
+                <button type="submit" class="btn btn-primary w-full gap-2">
+                    <i data-lucide="send" class="w-4 h-4"></i>
+                    دریافت کد تایید
+                </button>
             </form>
+
+            <div class="text-center mt-4">
+                <a href="{{ url_for('dashboard') }}" class="text-xs text-primary hover:underline">بازگشت</a>
+            </div>
         </div>
     </div>
 </div>

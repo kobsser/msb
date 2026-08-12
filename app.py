@@ -450,6 +450,47 @@ def verify_password():
 # Account settings (UID-based)
 # ============================================================
 
+@app.route("/account/<uid>/toggle_feature", methods=["POST"])
+@login_required
+def toggle_feature(uid):
+    account = get_tg_account_by_uid(uid)
+
+    if not account or account["owner_id"] != session["user_id"]:
+        return jsonify({"error": "not found"}), 404
+
+    data = request.get_json()
+    feature = data.get("feature")
+    enabled = bool(data.get("enabled", False))
+
+    feature_map = {
+        "meow": "meow_enabled",
+        "pishi": "pishi_enabled",
+        "fishing": "fishing_enabled",
+        "rescue": "rescue_enabled",
+    }
+
+    if feature not in feature_map:
+        return jsonify({"error": "invalid feature"}), 400
+
+    phone = account["phone"]
+
+    save_tg_account(
+        phone=phone,
+        owner_id=account["owner_id"],
+        session_string=account["session_string"],
+        selected_groups=account["selected_groups"],
+        meow_enabled=enabled if feature == "meow" else account["meow_enabled"],
+        pishi_enabled=enabled if feature == "pishi" else account["pishi_enabled"],
+        fishing_enabled=enabled if feature == "fishing" else account["fishing_enabled"],
+        rescue_enabled=enabled if feature == "rescue" else account["rescue_enabled"],
+        rescue_groups=account["rescue_groups"],
+        is_active=account["is_active"],
+        cached_groups=account["cached_groups"]
+    )
+
+    return jsonify({"success": True})
+
+
 @app.route("/account/<uid>/reset_timers", methods=["POST"])
 @login_required
 def reset_timers(uid):

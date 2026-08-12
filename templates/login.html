@@ -1,32 +1,35 @@
 {% extends "base.html" %}
 {% block title %}ورود{% endblock %}
 {% block content %}
-<div class="flex justify-center">
-    <div class="card w-full max-w-md bg-base-100 shadow-xl mt-12">
-        <div class="card-body">
-            <h2 class="card-title justify-center text-2xl mb-6">ورود به پنل</h2>
+<div class="flex justify-center items-center min-h-[60vh]">
+    <div class="w-full max-w-sm">
+        <div class="text-center mb-6">
+            <div class="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-3">
+                <i data-lucide="log-in" class="w-7 h-7 text-primary"></i>
+            </div>
+            <h1 class="text-xl font-bold">ورود به پنل</h1>
+            <p class="text-xs opacity-50 mt-1">خوش آمدید</p>
+        </div>
 
-            <form method="POST">
-                <div class="form-control w-full mb-4">
-                    <label class="label">
-                        <span class="label-text">نام کاربری</span>
-                    </label>
-                    <input type="text" name="username" class="input input-bordered w-full" required />
+        <div class="glass-card rounded-2xl p-6">
+            <form method="POST" class="space-y-4">
+                <div class="form-control">
+                    <label class="label pb-1"><span class="label-text text-xs font-medium opacity-60">نام کاربری</span></label>
+                    <input type="text" name="username" class="input input-bordered w-full bg-base-200/50" required autofocus>
                 </div>
-
-                <div class="form-control w-full mb-6">
-                    <label class="label">
-                        <span class="label-text">رمز عبور</span>
-                    </label>
-                    <input type="password" name="password" class="input input-bordered w-full" required />
+                <div class="form-control">
+                    <label class="label pb-1"><span class="label-text text-xs font-medium opacity-60">رمز عبور</span></label>
+                    <input type="password" name="password" class="input input-bordered w-full bg-base-200/50" required>
                 </div>
-
-                <button type="submit" class="btn btn-primary w-full">ورود</button>
-
-                <div class="text-center mt-4">
-                    <a href="{{ url_for('register') }}" class="link link-hover text-sm">حساب ندارید؟ ثبت نام با کد دعوت</a>
-                </div>
+                <button type="submit" class="btn btn-primary w-full gap-2">
+                    <i data-lucide="log-in" class="w-4 h-4"></i>
+                    ورود
+                </button>
             </form>
+
+            <div class="text-center mt-4">
+                <a href="{{ url_for('register') }}" class="text-xs text-primary hover:underline">حساب ندارید؟ ثبت نام با کد دعوت</a>
+            </div>
         </div>
     </div>
 </div>

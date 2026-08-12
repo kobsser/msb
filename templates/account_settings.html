@@ -1,257 +1,213 @@
 {% extends "base.html" %}
 {% block title %}تنظیمات اکانت{% endblock %}
 {% block content %}
-<div class="card bg-base-100 shadow-xl">
-    <div class="card-body">
+<div class="max-w-4xl mx-auto" x-data="{}">
+    <div class="glass-card rounded-2xl overflow-hidden">
         <!-- Header -->
-        <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
-            <div>
-                <h2 class="card-title text-2xl">تنظیمات {{ acc.account_name or acc.uid }}</h2>
-
-                <div class="text-sm opacity-70 flex items-center gap-2 mt-1" dir="ltr">
-                    <span class="masked-phone">***</span>
-                    <button type="button" class="btn btn-ghost btn-circle btn-xs reveal-phone"
-                        data-url="{{ url_for('reveal_phone', uid=acc.uid) }}">
-                        👁
-                    </button>
+        <div class="p-6 border-b border-base-content/5">
+            <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div class="flex items-center gap-3">
+                    <div class="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
+                        <i data-lucide="user" class="w-6 h-6 text-primary"></i>
+                    </div>
+                    <div>
+                        <h2 class="text-xl font-bold">{{ acc.account_name or acc.uid }}</h2>
+                        <div class="flex items-center gap-1.5 mt-0.5" dir="ltr">
+                            <span class="text-xs opacity-50 font-mono masked-phone">***</span>
+                            <button type="button" class="opacity-40 hover:opacity-100 transition-opacity reveal-phone"
+                                data-url="{{ url_for('reveal_phone', uid=acc.uid) }}">
+                                <i data-lucide="eye" class="w-3.5 h-3.5"></i>
+                            </button>
+                        </div>
+                    </div>
                 </div>
-            </div>
 
-            <div class="flex gap-2">
-                <a href="{{ url_for('account_logs', uid=acc.uid) }}" class="btn btn-outline btn-ghost btn-sm">
-                    📄 لاگ‌ها
-                </a>
-
-                <button type="button" class="btn btn-outline btn-warning btn-sm" id="reset-timers-btn">
-                    ⏱ ریست تایمرها
-                </button>
-
-                <form action="{{ url_for('refresh_groups', uid=acc.uid) }}" method="POST" class="inline">
-                    <button type="submit" class="btn btn-outline btn-secondary btn-sm">
-                        🔄 بروزرسانی گروه‌ها
+                <div class="flex gap-2">
+                    <a href="{{ url_for('account_logs', uid=acc.uid) }}" class="btn btn-ghost btn-sm gap-1">
+                        <i data-lucide="scroll-text" class="w-4 h-4"></i> لاگ‌ها
+                    </a>
+                    <button type="button" class="btn btn-outline btn-warning btn-sm gap-1" id="reset-timers-btn">
+                        <i data-lucide="timer-reset" class="w-4 h-4"></i> ریست تایمرها
                     </button>
-                </form>
+                    <form action="{{ url_for('refresh_groups', uid=acc.uid) }}" method="POST">
+                        <button type="submit" class="btn btn-outline btn-secondary btn-sm gap-1">
+                            <i data-lucide="refresh-cw" class="w-4 h-4"></i> بروزرسانی گروه‌ها
+                        </button>
+                    </form>
+                </div>
             </div>
         </div>
 
-        <form action="{{ url_for('save_account_settings', uid=acc.uid) }}" method="POST">
+        <form action="{{ url_for('save_account_settings', uid=acc.uid) }}" method="POST" class="p-6">
             <!-- Feature toggles -->
-            <div class="form-control mb-3">
-                <label class="cursor-pointer label justify-start gap-3 p-0">
-                    <input type="checkbox" name="meow_enabled" class="toggle toggle-primary" {% if acc.meow_enabled %}checked{% endif %} />
-                    <span class="label-text font-bold text-lg">فعالسازی میو (Meow)</span>
+            <h3 class="font-bold text-sm uppercase tracking-wider opacity-50 mb-4">فیچرها</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
+                <label class="cursor-pointer flex items-center gap-3 p-3 rounded-xl bg-base-200/50 hover:bg-base-200 transition-colors">
+                    <input type="checkbox" name="meow_enabled" class="toggle toggle-primary toggle-sm" {% if acc.meow_enabled %}checked{% endif %} />
+                    <span class="text-sm font-medium">🐱 میو (Meow)</span>
+                </label>
+                <label class="cursor-pointer flex items-center gap-3 p-3 rounded-xl bg-base-200/50 hover:bg-base-200 transition-colors">
+                    <input type="checkbox" name="pishi_enabled" class="toggle toggle-warning toggle-sm" {% if acc.pishi_enabled %}checked{% endif %} />
+                    <span class="text-sm font-medium">🐈 پیشی (Pishi)</span>
+                </label>
+                <label class="cursor-pointer flex items-center gap-3 p-3 rounded-xl bg-base-200/50 hover:bg-base-200 transition-colors">
+                    <input type="checkbox" name="fishing_enabled" class="toggle toggle-info toggle-sm" {% if acc.fishing_enabled %}checked{% endif %} />
+                    <span class="text-sm font-medium">🎣 ماهیگیری (Fishing)</span>
+                </label>
+                <label class="cursor-pointer flex items-center gap-3 p-3 rounded-xl bg-base-200/50 hover:bg-base-200 transition-colors">
+                    <input type="checkbox" name="rescue_enabled" class="toggle toggle-success toggle-sm" {% if acc.rescue_enabled %}checked{% endif %} />
+                    <span class="text-sm font-medium">🚑 نجات (Rescue)</span>
                 </label>
             </div>
 
-            <div class="form-control mb-3">
-                <label class="cursor-pointer label justify-start gap-3 p-0">
-                    <input type="checkbox" name="pishi_enabled" class="toggle toggle-secondary" {% if acc.pishi_enabled %}checked{% endif %} />
-                    <span class="label-text font-bold text-lg">فعالسازی پیشی (Pishi)</span>
-                </label>
-            </div>
-
-            <div class="form-control mb-3">
-                <label class="cursor-pointer label justify-start gap-3 p-0">
-                    <input type="checkbox" name="fishing_enabled" class="toggle toggle-accent" {% if acc.fishing_enabled %}checked{% endif %} />
-                    <span class="label-text font-bold text-lg">فعالسازی ماهیگیری (Fishing)</span>
-                </label>
-            </div>
-
-            <div class="form-control mb-6">
-                <label class="cursor-pointer label justify-start gap-3 p-0">
-                    <input type="checkbox" name="rescue_enabled" class="toggle toggle-success" {% if acc.rescue_enabled %}checked{% endif %} />
-                    <span class="label-text font-bold text-lg">فعالسازی نجات (Rescue)</span>
-                </label>
-            </div>
-
-            <div class="divider"></div>
-
-            <!-- Pishi Info Display -->
+            <!-- Pishi Info -->
             {% if acc.pishi_level_max > 0 or acc.pishi_mps > 0 or acc.pishi_capacity > 0 %}
-            <div class="mb-6 p-4 bg-base-200 rounded-lg">
-                <h3 class="text-lg font-bold mb-3">🐱 اطلاعات پیشی</h3>
-                <div class="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
-                    {% if acc.pishi_rank_number > 0 %}
-                    <div class="flex flex-col">
-                        <span class="opacity-60 text-xs">مقام</span>
-                        <span class="font-bold">{{ acc.pishi_rank_number }}</span>
-                    </div>
-                    {% endif %}
-
-                    {% if acc.pishi_level_max > 0 %}
-                    <div class="flex flex-col">
-                        <span class="opacity-60 text-xs">سطح</span>
-                        {% if acc.pishi_level_current >= acc.pishi_level_max %}
-                        <span class="font-bold text-success">{{ acc.pishi_level_current }}/{{ acc.pishi_level_max }} ✅</span>
-                        {% else %}
-                        <span class="font-bold text-warning">{{ acc.pishi_level_current }}/{{ acc.pishi_level_max }}</span>
-                        {% endif %}
-                    </div>
-                    {% endif %}
-
-                    {% if acc.pishi_mps > 0 %}
-                    <div class="flex flex-col">
-                        <span class="opacity-60 text-xs">تولید در ثانیه</span>
-                        <span class="font-bold">{{ acc.pishi_mps }} 🪙/s</span>
-                    </div>
-                    {% endif %}
-
-                    {% if acc.pishi_capacity > 0 %}
-                    <div class="flex flex-col">
-                        <span class="opacity-60 text-xs">ظرفیت</span>
-                        <span class="font-bold">{{ "{:,}".format(acc.pishi_capacity) }}</span>
-                    </div>
-                    {% endif %}
-
-                    {% if acc.pishi_upgrade_cost > 0 %}
-                    <div class="flex flex-col">
-                        <span class="opacity-60 text-xs">هزینه ارتقا</span>
-                        <span class="font-bold">{{ "{:,}".format(acc.pishi_upgrade_cost) }} 🪙</span>
-                    </div>
-                    {% endif %}
+            <h3 class="font-bold text-sm uppercase tracking-wider opacity-50 mb-4">اطلاعات پیشی</h3>
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+                {% if acc.pishi_rank_number > 0 %}
+                <div class="metric-box">
+                    <div class="text-lg font-bold">{{ acc.pishi_rank_number }}</div>
+                    <div class="text-[10px] opacity-40">مقام</div>
                 </div>
+                {% endif %}
+                {% if acc.pishi_level_max > 0 %}
+                <div class="metric-box">
+                    {% if acc.pishi_level_current >= acc.pishi_level_max %}
+                    <div class="text-lg font-bold text-success">{{ acc.pishi_level_current }}/{{ acc.pishi_level_max }} ✅</div>
+                    {% else %}
+                    <div class="text-lg font-bold text-warning">{{ acc.pishi_level_current }}/{{ acc.pishi_level_max }}</div>
+                    {% endif %}
+                    <div class="text-[10px] opacity-40">سطح</div>
+                </div>
+                {% endif %}
+                {% if acc.pishi_mps > 0 %}
+                <div class="metric-box">
+                    <div class="text-lg font-bold">{{ acc.pishi_mps }}</div>
+                    <div class="text-[10px] opacity-40">🪙/ثانیه</div>
+                </div>
+                {% endif %}
+                {% if acc.pishi_capacity > 0 %}
+                <div class="metric-box">
+                    <div class="text-lg font-bold">{{ "{:,}".format(acc.pishi_capacity) }}</div>
+                    <div class="text-[10px] opacity-40">ظرفیت</div>
+                </div>
+                {% endif %}
+                {% if acc.pishi_upgrade_cost > 0 %}
+                <div class="metric-box">
+                    <div class="text-lg font-bold">{{ "{:,}".format(acc.pishi_upgrade_cost) }}</div>
+                    <div class="text-[10px] opacity-40">هزینه ارتقا</div>
+                </div>
+                {% endif %}
             </div>
             {% endif %}
 
-            <div class="divider"></div>
+            <div class="divider my-4"></div>
 
             <!-- Main groups -->
-            <h3 class="text-xl font-bold mb-4">گروه‌های هدف اصلی</h3>
-
-            <div class="form-control mb-4 max-h-64 overflow-y-auto bg-base-200 p-4 rounded-lg">
+            <h3 class="font-bold text-sm uppercase tracking-wider opacity-50 mb-4">گروه‌های هدف اصلی</h3>
+            <div class="max-h-64 overflow-y-auto bg-base-200/50 p-4 rounded-xl mb-4 space-y-1">
                 {% for group in acc.cached_groups %}
-                <label class="cursor-pointer label justify-start gap-3 hover:bg-base-300 rounded-lg p-2 mb-1 transition-colors">
-                    <input type="checkbox" name="groups" value="{{ group.id }}" class="checkbox checkbox-sm"
-                        id="g_{{ group.id }}" {% if group.id|string in acc.selected_groups %}checked{% endif %} />
-                    <span class="label-text flex justify-between w-full items-center">
-                        <span>{{ group.title }}</span>
-                        <span class="badge badge-ghost badge-sm">{{ group.members or 0 }}👤</span>
-                    </span>
+                <label class="cursor-pointer flex items-center gap-3 hover:bg-base-300/50 rounded-lg p-2 transition-colors">
+                    <input type="checkbox" name="groups" value="{{ group.id }}" class="checkbox checkbox-sm checkbox-primary"
+                        {% if group.id|string in acc.selected_groups %}checked{% endif %} />
+                    <span class="text-sm flex-1">{{ group.title }}</span>
+                    <span class="badge badge-ghost badge-xs">{{ group.members or 0 }}</span>
                 </label>
                 {% else %}
-                <p class="text-error text-center my-4">
-                    هیچ گروهی پیدا نشد. ابتدا روی "بروزرسانی گروه‌ها" کلیک کنید.
-                </p>
+                <p class="text-error text-center text-sm py-4">هیچ گروهی پیدا نشد. ابتدا گروه‌ها را بروزرسانی کنید.</p>
                 {% endfor %}
             </div>
-
             <div class="form-control mb-6">
-                <label class="label">
-                    <span class="label-text">افزودن دستی آیدی گروه اصلی</span>
-                </label>
-                <input type="text" name="manual_group_id" class="input input-bordered" placeholder="-100123456789" dir="ltr">
-                <label class="label">
-                    <span class="label-text-alt">اگر گروه در لیست بالا نیست، آیدی عددی آن را اینجا وارد کنید.</span>
-                </label>
+                <input type="text" name="manual_group_id" class="input input-bordered input-sm bg-base-200/50" placeholder="-100123456789" dir="ltr">
+                <label class="label"><span class="label-text-alt opacity-50">افزودن دستی آیدی گروه اصلی</span></label>
             </div>
 
-            <div class="divider"></div>
+            <div class="divider my-4"></div>
 
             <!-- Rescue groups -->
-            <h3 class="text-xl font-bold mb-4">گروه‌های Rescue</h3>
-            <p class="text-sm opacity-60 mb-4">
-                Rescue علاوه بر گروه‌های اصلی و گروه بکاپ، به این گروه‌ها نیز گوش می‌دهد.
-            </p>
-
-            <div class="form-control mb-4 max-h-64 overflow-y-auto bg-base-200 p-4 rounded-lg">
+            <h3 class="font-bold text-sm uppercase tracking-wider opacity-50 mb-4">گروه‌های Rescue</h3>
+            <p class="text-xs opacity-50 mb-4">Rescue علاوه بر گروه‌های اصلی و گروه بکاپ، به این گروه‌ها نیز گوش می‌دهد.</p>
+            <div class="max-h-64 overflow-y-auto bg-base-200/50 p-4 rounded-xl mb-4 space-y-1">
                 {% for group in acc.cached_groups %}
-                <label class="cursor-pointer label justify-start gap-3 hover:bg-base-300 rounded-lg p-2 mb-1 transition-colors">
-                    <input type="checkbox" name="rescue_groups" value="{{ group.id }}" class="checkbox checkbox-sm"
-                        id="rg_{{ group.id }}" {% if group.id|string in acc.rescue_groups %}checked{% endif %} />
-                    <span class="label-text flex justify-between w-full items-center">
-                        <span>{{ group.title }}</span>
-                        <span class="badge badge-ghost badge-sm">{{ group.members or 0 }}👤</span>
-                    </span>
+                <label class="cursor-pointer flex items-center gap-3 hover:bg-base-300/50 rounded-lg p-2 transition-colors">
+                    <input type="checkbox" name="rescue_groups" value="{{ group.id }}" class="checkbox checkbox-sm checkbox-success"
+                        {% if group.id|string in acc.rescue_groups %}checked{% endif %} />
+                    <span class="text-sm flex-1">{{ group.title }}</span>
+                    <span class="badge badge-ghost badge-xs">{{ group.members or 0 }}</span>
                 </label>
                 {% else %}
-                <p class="text-error text-center my-4">
-                    هیچ گروهی پیدا نشد. ابتدا روی "بروزرسانی گروه‌ها" کلیک کنید.
-                </p>
+                <p class="text-error text-center text-sm py-4">هیچ گروهی پیدا نشد.</p>
                 {% endfor %}
             </div>
-
             <div class="form-control mb-6">
-                <label class="label">
-                    <span class="label-text">افزودن دستی آیدی گروه Rescue</span>
-                </label>
-                <input type="text" name="manual_rescue_group_id" class="input input-bordered" placeholder="-100123456789" dir="ltr">
-                <label class="label">
-                    <span class="label-text-alt">اگر گروه در لیست بالا نیست، آیدی عددی آن را اینجا وارد کنید.</span>
-                </label>
+                <input type="text" name="manual_rescue_group_id" class="input input-bordered input-sm bg-base-200/50" placeholder="-100123456789" dir="ltr">
+                <label class="label"><span class="label-text-alt opacity-50">افزودن دستی آیدی گروه Rescue</span></label>
             </div>
 
-            <!-- Submit -->
-            <button type="submit" class="btn btn-primary w-full mb-3">ذخیره تنظیمات</button>
-            <a href="{{ url_for('dashboard') }}" class="btn btn-outline w-full">بازگشت</a>
+            <button type="submit" class="btn btn-primary w-full gap-2">
+                <i data-lucide="save" class="w-4 h-4"></i>
+                ذخیره تنظیمات
+            </button>
+            <a href="{{ url_for('dashboard') }}" class="btn btn-ghost w-full mt-2">بازگشت</a>
         </form>
     </div>
 </div>
 
-<!-- Reset Timers Confirmation Modal -->
+<!-- Reset Timers Modal -->
 <dialog id="reset-modal" class="modal">
-    <div class="modal-box">
-        <h3 class="font-bold text-lg">⏱ ریست تایمرها</h3>
-        <p class="py-4">آیا مطمئن هستید که می‌خواهید تمام تایمرهای این اکانت را ریست کنید؟</p>
-        <div class="modal-action">
-            <button class="btn btn-ghost" id="reset-cancel-btn">انصراف</button>
+    <div class="modal-box glass-card border-0">
+        <div class="w-12 h-12 rounded-full bg-warning/10 flex items-center justify-center mb-4">
+            <i data-lucide="timer-reset" class="w-6 h-6 text-warning"></i>
+        </div>
+        <h3 class="font-bold text-lg mb-1">ریست تایمرها</h3>
+        <p class="text-sm opacity-60 mb-4">تمام تایمرهای این اکانت ریست خواهند شد.</p>
+        <div class="modal-action mt-0">
+            <button class="btn btn-ghost btn-sm" id="reset-cancel-btn">انصراف</button>
             <form id="reset-modal-form" method="POST">
-                <button type="submit" class="btn btn-warning">ریست</button>
+                <button type="submit" class="btn btn-warning btn-sm gap-1">
+                    <i data-lucide="timer-reset" class="w-3.5 h-3.5"></i> ریست
+                </button>
             </form>
         </div>
     </div>
-    <form method="dialog" class="modal-backdrop">
-        <button>close</button>
-    </form>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
 </dialog>
 
 <script>
-    // Reveal masked phone
-    const revealBtn = document.querySelector(".reveal-phone");
-
-    if (revealBtn) {
-        revealBtn.addEventListener("click", async function () {
-            const phoneSpan = revealBtn.parentElement.querySelector(".masked-phone");
-
-            if (revealBtn.dataset.revealed === "1") {
-                phoneSpan.textContent = "***";
-                revealBtn.dataset.revealed = "0";
-                revealBtn.textContent = "👁";
-                return;
-            }
-
-            try {
-                const response = await fetch(revealBtn.dataset.url);
-                const data = await response.json();
-
-                if (data.phone) {
-                    phoneSpan.textContent = data.phone;
-                    phoneSpan.setAttribute("dir", "ltr");
-                    revealBtn.dataset.revealed = "1";
-                    revealBtn.textContent = "🙈";
+    document.addEventListener('DOMContentLoaded', function() {
+        // Reveal phone
+        const revealBtn = document.querySelector('.reveal-phone');
+        if (revealBtn) {
+            revealBtn.addEventListener('click', async function() {
+                const phoneSpan = revealBtn.parentElement.querySelector('.masked-phone');
+                if (revealBtn.dataset.revealed === '1') {
+                    phoneSpan.textContent = '***';
+                    revealBtn.dataset.revealed = '0';
+                    return;
                 }
-            } catch (e) {
-                console.error(e);
-            }
-        });
-    }
+                try {
+                    const res = await fetch(revealBtn.dataset.url);
+                    const data = await res.json();
+                    if (data.phone) { phoneSpan.textContent = data.phone; revealBtn.dataset.revealed = '1'; }
+                } catch(e) { console.error(e); }
+            });
+        }
 
-    // Reset timers modal
-    const resetBtn = document.getElementById("reset-timers-btn");
-    const resetModal = document.getElementById("reset-modal");
-    const resetCancelBtn = document.getElementById("reset-cancel-btn");
-    const resetForm = document.getElementById("reset-modal-form");
+        // Reset modal
+        const resetBtn = document.getElementById('reset-timers-btn');
+        const resetModal = document.getElementById('reset-modal');
+        const resetCancel = document.getElementById('reset-cancel-btn');
+        const resetForm = document.getElementById('reset-modal-form');
 
-    if (resetBtn && resetModal) {
-        resetBtn.addEventListener("click", function () {
-            resetForm.action = "{{ url_for('reset_timers', uid=acc.uid) }}";
-            resetModal.showModal();
-        });
-    }
-
-    if (resetCancelBtn && resetModal) {
-        resetCancelBtn.addEventListener("click", function () {
-            resetModal.close();
-        });
-    }
+        if (resetBtn && resetModal) {
+            resetBtn.addEventListener('click', () => {
+                resetForm.action = "{{ url_for('reset_timers', uid=acc.uid) }}";
+                resetModal.showModal();
+            });
+        }
+        if (resetCancel && resetModal) {
+            resetCancel.addEventListener('click', () => resetModal.close());
+        }
+    });
 </script>
 {% endblock %}

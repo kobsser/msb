@@ -7,11 +7,8 @@
     <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.10/dist/full.min.css" rel="stylesheet" type="text/css" />
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet" type="text/css" />
-    <style>
-        body {
-            font-family: 'Vazirmatn', Tahoma, sans-serif;
-        }
-    </style>
+    <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+    <style>body { font-family: 'Vazirmatn', Tahoma, sans-serif; }</style>
     <script>
         (function() {
             const theme = localStorage.getItem('theme') || 'dark';
@@ -20,27 +17,20 @@
     </script>
 </head>
 <body class="min-h-screen bg-base-200 flex items-center justify-center p-4">
-    <div class="card bg-base-100 shadow-xl w-full max-w-md">
-        <div class="card-body text-center">
-            <div class="flex justify-center mb-4">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 text-warning" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-            </div>
-
-            <h1 class="text-2xl font-bold">🛠️ Maintenance</h1>
-
-            <p class="opacity-70 mt-2 leading-relaxed">
-                سیستم در حال نگهداری است.
-                <br>
-                لطفا بعدا دوباره تلاش کنید.
-            </p>
-
-            <div class="mt-6">
-                <a href="/login" class="btn btn-outline btn-sm">صفحه ورود</a>
-            </div>
+    <div class="text-center">
+        <div class="w-16 h-16 rounded-2xl bg-warning/10 flex items-center justify-center mx-auto mb-4">
+            <i data-lucide="wrench" class="w-8 h-8 text-warning"></i>
         </div>
+        <h1 class="text-2xl font-bold mb-2">🛠️ Maintenance</h1>
+        <p class="text-sm opacity-50 leading-relaxed">
+            سیستم در حال نگهداری است.
+            <br>لطفا بعدا دوباره تلاش کنید.
+        </p>
+        <a href="/login" class="btn btn-outline btn-sm mt-6 gap-1">
+            <i data-lucide="log-in" class="w-3.5 h-3.5"></i>
+            صفحه ورود
+        </a>
     </div>
+    <script>document.addEventListener('DOMContentLoaded', () => lucide.createIcons());</script>
 </body>
 </html>

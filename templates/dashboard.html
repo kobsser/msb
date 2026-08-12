@@ -2,656 +2,662 @@
 {% block title %}داشبورد{% endblock %}
 {% block content %}
 
-<!-- Header -->
-<div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
-    <h2 class="text-2xl font-bold">اکانت‌های من</h2>
-    <a href="{{ url_for('add_account') }}" class="btn btn-primary">+ افزودن اکانت جدید</a>
-</div>
+<div x-data="dashboard()">
 
-<!-- Summary Cards -->
-<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-    <div class="card bg-base-100 shadow">
-        <div class="card-body p-4">
-            <div class="text-sm opacity-60">اکانت‌ها</div>
-            <div class="text-xl font-bold">{{ accounts|length }}</div>
+    <!-- Header -->
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+        <div>
+            <h2 class="text-2xl font-bold tracking-tight">اکانت‌های من</h2>
+            <p class="text-sm opacity-50 mt-1">{{ accounts|length }} اکانت ثبت شده</p>
         </div>
+        <a href="{{ url_for('add_account') }}" class="btn btn-primary gap-2">
+            <i data-lucide="plus" class="w-4 h-4"></i>
+            افزودن اکانت
+        </a>
     </div>
 
-    <div class="card bg-base-100 shadow">
-        <div class="card-body p-4">
-            <div class="text-sm opacity-60">فعال</div>
-            <div class="text-xl font-bold text-success">{{ active_count }}</div>
-        </div>
-    </div>
-
-    <div class="card bg-base-100 shadow">
-        <div class="card-body p-4">
-            <div class="text-sm opacity-60">خطا</div>
-            <div class="text-xl font-bold text-error">{{ error_count }}</div>
-        </div>
-    </div>
-
-    <div class="card bg-base-100 shadow">
-        <div class="card-body p-4">
-            <div class="text-sm opacity-60">موجودی کل</div>
-            <div class="text-xl font-bold text-info">{{ "{:,}".format(total_balance or 0) }}</div>
-        </div>
-    </div>
-</div>
-
-<!-- Active Jobs -->
-{% if active_jobs %}
-<div class="card bg-base-100 shadow mb-6">
-    <div class="card-body p-4">
-        <h3 class="font-bold text-sm mb-2">⏳ عملیات در حال اجرا</h3>
-        <div id="active-jobs-container" class="flex flex-col gap-2">
-            {% for job in active_jobs %}
-            <div class="flex items-center gap-3" data-job-id="{{ job.id }}">
-                <span class="text-sm">
-                    {% if job.type == 'update_status' %}🔄 آپدیت وضعیت
-                    {% elif job.type == 'update_profiles' %}🍬 بروزرسانی پروفایل
-                    {% elif job.type == 'transfer' %}💸 انتقال موجودی
-                    {% else %}{{ job.type }}{% endif %}
-                </span>
-                <progress class="progress progress-primary w-40" value="{{ job.processed_accounts }}"
-                    max="{{ job.total_accounts }}"></progress>
-                <span class="text-xs opacity-60 job-progress-text">{{ job.processed_accounts }}/{{ job.total_accounts
-                    }}</span>
+    <!-- Summary Cards -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+        <div class="glass-card rounded-2xl p-4 flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+                <i data-lucide="smartphone" class="w-5 h-5 text-primary"></i>
             </div>
-            {% endfor %}
-        </div>
-    </div>
-</div>
-{% endif %}
-
-<!-- Global Tools -->
-<div class="card bg-base-100 shadow-xl mb-6">
-    <div class="card-body gap-4">
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <!-- Backup group -->
-            <form method="POST" action="{{ url_for('save_backup_group') }}" data-loading class="flex flex-col gap-2">
-                <label class="label p-0">
-                    <span class="label-text font-bold">گروه بکاپ (آیدی عددی)</span>
-                </label>
-                <div class="join w-full">
-                    <input type="text" name="backup_group_id" dir="ltr" placeholder="-100123456789"
-                        value="{{ backup_group_id or '' }}" class="input input-bordered join-item w-full" />
-                    <button type="submit" class="btn btn-primary join-item">ذخیره</button>
-                </div>
-                <span class="label-text-alt opacity-60">این گروه فقط برای قابلیت‌های ویژه استفاده می‌شود.</span>
-            </form>
-
-            <!-- Update buttons -->
-            <div class="flex flex-col gap-2">
-                <span class="label-text font-bold">بروزرسانی اطلاعات</span>
-                <div class="flex gap-2">
-                    <form method="POST" action="{{ url_for('update_status') }}" data-loading class="flex-1">
-                        <button type="submit" class="btn btn-outline btn-secondary w-full">🔄 آپدیت</button>
-                    </form>
-                    <form method="POST" action="{{ url_for('update_profiles') }}" data-loading class="flex-1">
-                        <button type="submit" class="btn btn-outline btn-info w-full">🍬 میوهام</button>
-                    </form>
-                </div>
-                <span class="label-text-alt opacity-60">«آپدیت»: نام + عضویت گروه بکاپ | «میوهام»: موجودی + آمار</span>
+            <div>
+                <div class="text-xs opacity-50">اکانت‌ها</div>
+                <div class="text-xl font-bold">{{ accounts|length }}</div>
             </div>
+        </div>
 
-            <!-- Transfer -->
-            <div class="flex flex-col gap-2">
-                <span class="label-text font-bold">انتقال موجودی به کاربر</span>
-                <div class="join w-full">
-                    <input type="text" id="transfer-target" dir="ltr" placeholder="12345678"
-                        class="input input-bordered join-item w-full" />
-                    <button type="button" class="btn btn-warning join-item" id="transfer-btn">انتقال</button>
-                </div>
-                <span class="label-text-alt opacity-60">کل موجودی همه اکانت‌های عضو گروه بکاپ به آیدی واردشده منتقل
-                    می‌شود.</span>
+        <div class="glass-card rounded-2xl p-4 flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-success/10 flex items-center justify-center">
+                <i data-lucide="activity" class="w-5 h-5 text-success"></i>
+            </div>
+            <div>
+                <div class="text-xs opacity-50">فعال</div>
+                <div class="text-xl font-bold text-success">{{ active_count }}</div>
+            </div>
+        </div>
+
+        <div class="glass-card rounded-2xl p-4 flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-error/10 flex items-center justify-center">
+                <i data-lucide="alert-triangle" class="w-5 h-5 text-error"></i>
+            </div>
+            <div>
+                <div class="text-xs opacity-50">خطا</div>
+                <div class="text-xl font-bold text-error">{{ error_count }}</div>
+            </div>
+        </div>
+
+        <div class="glass-card rounded-2xl p-4 flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-info/10 flex items-center justify-center">
+                <i data-lucide="coins" class="w-5 h-5 text-info"></i>
+            </div>
+            <div>
+                <div class="text-xs opacity-50">موجودی کل</div>
+                <div class="text-xl font-bold text-info">{{ "{:,}".format(total_balance or 0) }}</div>
             </div>
         </div>
     </div>
-</div>
 
-<!-- Search / Filter / Sort / Bulk -->
-<div class="card bg-base-100 shadow mb-6">
-    <div class="card-body p-4">
-        <div class="grid grid-cols-1 md:grid-cols-5 gap-3">
-            <input id="account-search" type="text" placeholder="جستجو..." class="input input-bordered w-full">
+    <!-- Toolbar -->
+    <div class="glass-card rounded-2xl p-4 mb-6 sticky top-16 z-40">
+        <div class="flex flex-col lg:flex-row gap-3">
+            <!-- Search -->
+            <div class="flex-1">
+                <div class="relative">
+                    <i data-lucide="search" class="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 opacity-40"></i>
+                    <input x-model="searchQuery" type="text" placeholder="جستجوی اکانت..."
+                        class="input input-bordered w-full pr-10 bg-base-200/50 focus:bg-base-100 transition-colors">
+                </div>
+            </div>
 
-            <select id="status-filter" class="select select-bordered w-full">
-                <option value="">همه وضعیت‌ها</option>
-                <option value="1">فعال</option>
-                <option value="0">غیرفعال</option>
-            </select>
-
-            <select id="feature-filter" class="select select-bordered w-full">
-                <option value="">همه فیچرها</option>
-                <option value="meow">میو روشن</option>
-                <option value="pishi">پیشی روشن</option>
-                <option value="fishing">ماهی روشن</option>
-                <option value="rescue">نجات روشن</option>
-            </select>
-
-            <select id="sort-by" class="select select-bordered w-full">
-                <option value="balance_desc">موجودی: زیاد به کم</option>
-                <option value="balance_asc">موجودی: کم به زیاد</option>
-                <option value="name_asc">نام: الفبا</option>
-            </select>
-
+            <!-- Filters -->
             <div class="flex gap-2">
-                <button id="bulk-start" class="btn btn-success btn-sm flex-1">شروع انتخاب‌شده‌ها</button>
-                <button id="bulk-stop" class="btn btn-error btn-sm flex-1">توقف انتخاب‌شده‌ها</button>
+                <select x-model="statusFilter" class="select select-bordered bg-base-200/50 text-sm">
+                    <option value="">همه وضعیت‌ها</option>
+                    <option value="1">فعال</option>
+                    <option value="0">غیرفعال</option>
+                </select>
+
+                <select x-model="featureFilter" class="select select-bordered bg-base-200/50 text-sm">
+                    <option value="">همه فیچرها</option>
+                    <option value="meow">میو روشن</option>
+                    <option value="pishi">پیشی روشن</option>
+                    <option value="fishing">ماهی روشن</option>
+                    <option value="rescue">نجات روشن</option>
+                </select>
+
+                <select x-model="sortBy" class="select select-bordered bg-base-200/50 text-sm">
+                    <option value="balance_desc">موجودی ↓</option>
+                    <option value="balance_asc">موجودی ↑</option>
+                    <option value="name_asc">نام الفبا</option>
+                </select>
+            </div>
+
+            <!-- Bulk Actions -->
+            <div class="flex gap-2">
+                <button @click="selectMode = !selectMode"
+                    class="btn btn-ghost btn-sm gap-1"
+                    :class="selectMode ? 'btn-primary' : ''">
+                    <i data-lucide="check-square" class="w-4 h-4"></i>
+                    انتخاب
+                </button>
+
+                <template x-if="selectMode">
+                    <div class="flex gap-1">
+                        <button @click="bulkAction('start')" class="btn btn-success btn-sm gap-1">
+                            <i data-lucide="play" class="w-3 h-3"></i>
+                            شروع
+                        </button>
+                        <button @click="showBulkStopModal = true" class="btn btn-error btn-sm gap-1">
+                            <i data-lucide="square" class="w-3 h-3"></i>
+                            توقف
+                        </button>
+                    </div>
+                </template>
             </div>
         </div>
     </div>
-</div>
 
-<!-- Account Cards -->
-{% if accounts %}
-<div id="accounts-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-    {% for acc in accounts %}
-    <div class="card bg-base-100 shadow-xl account-card"
-        data-search="{{ (acc.account_name or '')|lower }} {{ acc.uid|lower }}"
-        data-active="{{ 1 if acc.is_active else 0 }}" data-balance="{{ acc.balance or 0 }}"
-        data-name="{{ acc.account_name or '' }}" data-meow="{{ 1 if acc.meow_enabled else 0 }}"
-        data-pishi="{{ 1 if acc.pishi_enabled else 0 }}" data-fishing="{{ 1 if acc.fishing_enabled else 0 }}"
-        data-rescue="{{ 1 if acc.rescue_enabled else 0 }}">
-        <div class="card-body">
-            <!-- Title + Checkbox -->
-            <div class="flex justify-between items-start gap-2">
-                <div>
-                    <h2 class="card-title text-lg">
-                        {{ acc.account_name or '📱 بدون نام' }}
-                    </h2>
+    <!-- Active Jobs Toast -->
+    <template x-if="activeJobs.length > 0">
+        <div class="fixed bottom-4 left-4 z-50 flex flex-col gap-2">
+            <template x-for="job in activeJobs" :key="job.id">
+                <div class="glass-card rounded-xl p-3 shadow-xl w-72 animate__animated animate__fadeInUp">
+                    <div class="flex items-center gap-2 mb-2">
+                        <span class="loading loading-spinner loading-xs text-primary"></span>
+                        <span class="text-xs font-medium" x-text="getJobLabel(job.type)"></span>
+                    </div>
+                    <progress class="progress progress-primary w-full h-1.5"
+                        :value="job.processed_accounts" :max="job.total_accounts"></progress>
+                    <div class="text-xs opacity-50 mt-1 text-left"
+                        x-text="job.processed_accounts + '/' + job.total_accounts"></div>
+                </div>
+            </template>
+        </div>
+    </template>
 
-                    <div class="text-sm opacity-70 -mt-2 flex items-center gap-2" dir="ltr">
-                        <span class="masked-phone">***</span>
-                        <button type="button" class="btn btn-ghost btn-circle btn-xs reveal-phone"
-                            data-url="{{ url_for('reveal_phone', uid=acc.uid) }}">
-                            👁
-                        </button>
+    <!-- Account Cards -->
+    {% if accounts %}
+    <div id="accounts-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        {% for acc in accounts %}
+        <div class="account-card animate__animated animate__fadeInUp"
+            style="animation-delay: {{ loop.index * 50 }}ms"
+            data-search="{{ (acc.account_name or '')|lower }} {{ acc.uid|lower }}"
+            data-active="{{ 1 if acc.is_active else 0 }}"
+            data-balance="{{ acc.balance or 0 }}"
+            data-name="{{ acc.account_name or '' }}"
+            data-meow="{{ 1 if acc.meow_enabled else 0 }}"
+            data-pishi="{{ 1 if acc.pishi_enabled else 0 }}"
+            data-fishing="{{ 1 if acc.fishing_enabled else 0 }}"
+            data-rescue="{{ 1 if acc.rescue_enabled else 0 }}">
+
+            <div class="glass-card rounded-2xl overflow-hidden transition-all duration-300 hover:shadow-xl hover:shadow-base-content/5 hover:-translate-y-0.5
+                {% if acc.is_active and acc.session_status == 'connected' %}status-border-connected
+                {% elif acc.session_status == 'error' %}status-border-error
+                {% elif acc.is_active and acc.flood_wait_until > 0 %}status-border-flood
+                {% else %}status-border-stopped{% endif %}">
+
+                <!-- Zone 1: Identity -->
+                <div class="p-4 pb-3">
+                    <div class="flex justify-between items-start">
+                        <div class="flex items-center gap-3">
+                            <!-- Select checkbox -->
+                            <template x-if="selectMode">
+                                <input type="checkbox" class="checkbox checkbox-sm checkbox-primary bulk-check"
+                                    :value="'{{ acc.uid }}'" x-model="selectedUids">
+                            </template>
+
+                            <!-- Status dot -->
+                            <div class="relative">
+                                <div class="w-2.5 h-2.5 rounded-full mt-1.5
+                                    {% if acc.is_active and acc.session_status == 'connected' %}bg-success animate-pulse
+                                    {% elif acc.session_status == 'error' %}bg-error
+                                    {% elif acc.is_active %}bg-warning
+                                    {% else %}bg-base-content/20{% endif %}"></div>
+                            </div>
+
+                            <div>
+                                <h3 class="font-bold text-base leading-tight">{{ acc.account_name or 'بدون نام' }}</h3>
+                                <div class="flex items-center gap-1.5 mt-0.5" dir="ltr">
+                                    <span class="text-xs opacity-50 font-mono masked-phone">***</span>
+                                    <button type="button" class="opacity-40 hover:opacity-100 transition-opacity reveal-phone"
+                                        data-url="{{ url_for('reveal_phone', uid=acc.uid) }}"
+                                        data-tippy-content="نمایش شماره">
+                                        <i data-lucide="eye" class="w-3.5 h-3.5"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Backup badge -->
+                        {% if acc.in_backup_group == 1 %}
+                        <span class="badge badge-success badge-sm gap-1" data-tippy-content="عضو گروه بکاپ">
+                            <i data-lucide="shield-check" class="w-3 h-3"></i>
+                        </span>
+                        {% elif acc.in_backup_group == 0 %}
+                        <span class="badge badge-error badge-sm gap-1" data-tippy-content="عضو گروه بکاپ نیست">
+                            <i data-lucide="shield-x" class="w-3 h-3"></i>
+                        </span>
+                        {% endif %}
                     </div>
                 </div>
 
-                <input type="checkbox" class="checkbox checkbox-sm bulk-check" value="{{ acc.uid }}">
+                <!-- Zone 2: Metrics -->
+                <div class="px-4 pb-3">
+                    <div class="grid grid-cols-4 gap-2">
+                        <div class="metric-box" data-tippy-content="موجودی میو پوینت">
+                            <i data-lucide="coins" class="w-3.5 h-3.5 mx-auto mb-1 text-info"></i>
+                            <div class="text-sm font-bold">{{ "{:,}".format(acc.balance or 0) }}</div>
+                            <div class="text-[10px] opacity-40">موجودی</div>
+                        </div>
+
+                        <div class="metric-box" data-tippy-content="سطح اکانت">
+                            <i data-lucide="star" class="w-3.5 h-3.5 mx-auto mb-1 text-primary"></i>
+                            <div class="text-sm font-bold">{{ acc.level or 0 }}</div>
+                            <div class="text-[10px] opacity-40">سطح</div>
+                        </div>
+
+                        <div class="metric-box" data-tippy-content="سطح پیشی">
+                            <i data-lucide="cat" class="w-3.5 h-3.5 mx-auto mb-1 text-warning"></i>
+                            {% if acc.pishi_level_max > 0 %}
+                                {% if acc.pishi_level_current >= acc.pishi_level_max %}
+                                <div class="text-sm font-bold text-success">{{ acc.pishi_level_current }}/{{ acc.pishi_level_max }}</div>
+                                {% else %}
+                                <div class="text-sm font-bold text-warning">{{ acc.pishi_level_current }}/{{ acc.pishi_level_max }}</div>
+                                {% endif %}
+                            {% else %}
+                            <div class="text-sm font-bold opacity-30">—</div>
+                            {% endif %}
+                            <div class="text-[10px] opacity-40">پیشی</div>
+                        </div>
+
+                        <div class="metric-box" data-tippy-content="زمان تا اجرای بعدی">
+                            <i data-lucide="timer" class="w-3.5 h-3.5 mx-auto mb-1 text-secondary"></i>
+                            <div class="text-sm font-bold countdown-timer" data-timestamp="{{ acc.meow_next_run }}">--:--</div>
+                            <div class="text-[10px] opacity-40">میو</div>
+                        </div>
+                    </div>
+
+                    <!-- Expandable details -->
+                    <div x-data="{ expanded: false }">
+                        <button @click="expanded = !expanded"
+                            class="btn btn-ghost btn-xs w-full mt-2 gap-1 opacity-50 hover:opacity-100">
+                            <i data-lucide="chevron-down" class="w-3 h-3 transition-transform" :class="expanded && 'rotate-180'"></i>
+                            <span class="text-[10px]">جزئیات بیشتر</span>
+                        </button>
+
+                        <div x-show="expanded" x-collapse class="mt-2 space-y-2">
+                            <!-- Pishi info -->
+                            {% if acc.pishi_mps > 0 or acc.pishi_capacity > 0 or acc.pishi_upgrade_cost > 0 %}
+                            <div class="bg-base-200/50 rounded-lg p-2.5 text-xs space-y-1.5">
+                                <div class="font-bold text-[11px] opacity-60 mb-1">🐱 اطلاعات پیشی</div>
+                                {% if acc.pishi_rank_number > 0 %}
+                                <div class="flex justify-between"><span class="opacity-50">مقام</span><span class="font-bold">{{ acc.pishi_rank_number }}</span></div>
+                                {% endif %}
+                                {% if acc.pishi_mps > 0 %}
+                                <div class="flex justify-between"><span class="opacity-50">تولید/ثانیه</span><span class="font-bold">{{ acc.pishi_mps }} 🪙</span></div>
+                                {% endif %}
+                                {% if acc.pishi_capacity > 0 %}
+                                <div class="flex justify-between"><span class="opacity-50">ظرفیت</span><span class="font-bold">{{ "{:,}".format(acc.pishi_capacity) }}</span></div>
+                                {% endif %}
+                                {% if acc.pishi_upgrade_cost > 0 %}
+                                <div class="flex justify-between"><span class="opacity-50">هزینه ارتقا</span><span class="font-bold">{{ "{:,}".format(acc.pishi_upgrade_cost) }} 🪙</span></div>
+                                {% endif %}
+                            </div>
+                            {% endif %}
+
+                            <!-- Ranks -->
+                            <div class="bg-base-200/50 rounded-lg p-2.5 text-xs space-y-1.5">
+                                <div class="font-bold text-[11px] opacity-60 mb-1">رتبه‌ها</div>
+                                <div class="flex justify-between"><span class="opacity-50">💰 موجودی</span><span class="font-bold">{{ "{:,}".format(acc.balance_rank or 0) }}</span></div>
+                                <div class="flex justify-between"><span class="opacity-50">🐾 میو</span><span class="font-bold">{{ "{:,}".format(acc.meow_rank or 0) }}</span></div>
+                                <div class="flex justify-between"><span class="opacity-50">🐈 خیابانی</span><span class="font-bold">{{ "{:,}".format(acc.street_cats_rank or 0) }}</span></div>
+                            </div>
+
+                            <!-- Timers -->
+                            <div class="bg-base-200/50 rounded-lg p-2.5 text-xs space-y-1.5">
+                                <div class="font-bold text-[11px] opacity-60 mb-1">⏱ تایمرها</div>
+                                {% if acc.meow_enabled %}
+                                <div class="flex justify-between"><span class="opacity-50">میو</span><span class="font-bold countdown-timer" data-timestamp="{{ acc.meow_next_run }}">--:--</span></div>
+                                {% endif %}
+                                {% if acc.pishi_enabled %}
+                                <div class="flex justify-between"><span class="opacity-50">پیشی</span><span class="font-bold countdown-timer" data-timestamp="{{ acc.pishi_next_run }}">--:--</span></div>
+                                {% endif %}
+                                {% if acc.fishing_enabled %}
+                                <div class="flex justify-between"><span class="opacity-50">ماهی</span><span class="font-bold countdown-timer" data-timestamp="{{ acc.fishing_next_run }}">--:--</span></div>
+                                {% endif %}
+                            </div>
+
+                            <!-- Session status -->
+                            {% if acc.session_status == 'error' and acc.last_error %}
+                            <div class="bg-error/5 border border-error/10 rounded-lg p-2.5 text-xs">
+                                <div class="font-bold text-error text-[11px] mb-1">⚠️ آخرین خطا</div>
+                                <div class="opacity-60 font-mono text-[10px] break-all">{{ acc.last_error[:100] }}</div>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Zone 3: Features + Actions -->
+                <div class="px-4 pb-4">
+                    <!-- Feature toggles -->
+                    <div class="grid grid-cols-4 gap-1.5 mb-3">
+                        <button @click="toggleFeature('{{ acc.uid }}', 'meow', {{ 'false' if acc.meow_enabled else 'true' }})"
+                            class="btn btn-xs gap-1 {{ 'btn-primary' if acc.meow_enabled else 'btn-ghost opacity-40' }}"
+                            data-tippy-content="میو">
+                            🐱
+                        </button>
+                        <button @click="toggleFeature('{{ acc.uid }}', 'pishi', {{ 'false' if acc.pishi_enabled else 'true' }})"
+                            class="btn btn-xs gap-1 {{ 'btn-warning' if acc.pishi_enabled else 'btn-ghost opacity-40' }}"
+                            data-tippy-content="پیشی">
+                            🐈
+                        </button>
+                        <button @click="toggleFeature('{{ acc.uid }}', 'fishing', {{ 'false' if acc.fishing_enabled else 'true' }})"
+                            class="btn btn-xs gap-1 {{ 'btn-info' if acc.fishing_enabled else 'btn-ghost opacity-40' }}"
+                            data-tippy-content="ماهی">
+                            🎣
+                        </button>
+                        <button @click="toggleFeature('{{ acc.uid }}', 'rescue', {{ 'false' if acc.rescue_enabled else 'true' }})"
+                            class="btn btn-xs gap-1 {{ 'btn-success' if acc.rescue_enabled else 'btn-ghost opacity-40' }}"
+                            data-tippy-content="نجات">
+                            🚑
+                        </button>
+                    </div>
+
+                    <!-- Actions -->
+                    <div class="flex items-center gap-1.5">
+                        <a href="{{ url_for('account_settings', uid=acc.uid) }}"
+                            class="btn btn-ghost btn-xs gap-1 flex-1" data-tippy-content="تنظیمات">
+                            <i data-lucide="settings" class="w-3.5 h-3.5"></i>
+                        </a>
+                        <a href="{{ url_for('account_logs', uid=acc.uid) }}"
+                            class="btn btn-ghost btn-xs gap-1 flex-1" data-tippy-content="لاگ‌ها">
+                            <i data-lucide="scroll-text" class="w-3.5 h-3.5"></i>
+                        </a>
+
+                        <div class="flex-1"></div>
+
+                        <form action="{{ url_for('toggle_account', uid=acc.uid) }}" method="POST" class="inline">
+                            <button type="submit"
+                                class="btn btn-xs {{ 'btn-error btn-outline' if acc.is_active else 'btn-success' }} gap-1">
+                                <i data-lucide="{{ 'square' if acc.is_active else 'play' }}" class="w-3 h-3"></i>
+                                {{ 'توقف' if acc.is_active else 'شروع' }}
+                            </button>
+                        </form>
+
+                        <button type="button" class="btn btn-ghost btn-xs text-error delete-btn"
+                            data-action="{{ url_for('delete_account', uid=acc.uid) }}"
+                            data-name="{{ acc.account_name or acc.uid }}"
+                            data-tippy-content="حذف اکانت">
+                            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                        </button>
+                    </div>
+                </div>
             </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <!-- Empty State -->
+    <div class="glass-card rounded-2xl p-12 text-center">
+        <div class="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-4">
+            <i data-lucide="smartphone" class="w-8 h-8 text-primary"></i>
+        </div>
+        <h3 class="text-xl font-bold mb-2">هنوز اکانتی اضافه نکرده‌اید</h3>
+        <p class="text-sm opacity-50 mb-6 max-w-md mx-auto">
+            برای شروع، اکانت تلگرام خود را اضافه کنید، گروه‌های هدف را انتخاب کنید و فیچرهای مورد نظر را فعال کنید.
+        </p>
+        <div class="flex flex-col items-center gap-3 text-xs opacity-40 mb-6">
+            <div class="flex items-center gap-2"><span class="badge badge-primary badge-xs">۱</span> افزودن اکانت تلگرام</div>
+            <div class="flex items-center gap-2"><span class="badge badge-primary badge-xs">۲</span> انتخاب گروه‌های هدف</div>
+            <div class="flex items-center gap-2"><span class="badge badge-primary badge-xs">۳</span> فعالسازی فیچرها</div>
+            <div class="flex items-center gap-2"><span class="badge badge-primary badge-xs">۴</span> شروع ربات</div>
+        </div>
+        <a href="{{ url_for('add_account') }}" class="btn btn-primary gap-2">
+            <i data-lucide="plus" class="w-4 h-4"></i>
+            افزودن اولین اکانت
+        </a>
+    </div>
+    {% endif %}
 
-            <!-- Status badges -->
-            <div class="flex flex-wrap gap-1 mt-2">
-                {% if acc.is_active %}
-                <span class="badge badge-success">🟢 فعال</span>
-                {% else %}
-                <span class="badge badge-ghost">⚪ غیرفعال</span>
-                {% endif %}
-
-                {% if acc.session_status == 'connected' %}
-                <span class="badge badge-success">session: connected</span>
-                {% elif acc.session_status == 'error' %}
-                <span class="badge badge-error">session: error</span>
-                {% elif acc.session_status == 'stopped' %}
-                <span class="badge badge-ghost">session: stopped</span>
-                {% else %}
-                <span class="badge badge-ghost">session: unknown</span>
-                {% endif %}
-
-                {% if acc.in_backup_group == 1 %}
-                <span class="badge badge-success">گروه بکاپ: عضو ✔</span>
-                {% elif acc.in_backup_group == 0 %}
-                <span class="badge badge-error">گروه بکاپ: عضو نیست ✖</span>
-                {% else %}
-                <span class="badge badge-ghost">گروه بکاپ: بررسی نشده</span>
-                {% endif %}
+    <!-- Delete Modal -->
+    <dialog id="delete-modal" class="modal">
+        <div class="modal-box glass-card border-0">
+            <div class="w-12 h-12 rounded-full bg-error/10 flex items-center justify-center mb-4">
+                <i data-lucide="trash-2" class="w-6 h-6 text-error"></i>
             </div>
-
-            <!-- Stats badges -->
-            <div class="flex flex-wrap gap-1 mt-1">
-                <span class="badge badge-info">💰 {{ "{:,}".format(acc.balance or 0) }}</span>
-                <span class="badge badge-primary">⭐️ سطح {{ acc.level or 0 }}</span>
-                <span class="badge badge-secondary">🐾 {{ acc.meow_count or 0 }}</span>
-                <span class="badge badge-accent">🐈 {{ acc.street_cats or 0 }}</span>
-            </div>
-
-            <!-- Pishi info -->
-            {% if acc.pishi_level_max > 0 or acc.pishi_mps > 0 or acc.pishi_capacity > 0 %}
-            <div class="flex flex-wrap gap-1 mt-1">
-                {% if acc.pishi_level_max > 0 %}
-                {% if acc.pishi_level_current >= acc.pishi_level_max %}
-                <span class="badge badge-success">🐱 سطح {{ acc.pishi_level_current }}/{{ acc.pishi_level_max }}</span>
-                {% else %}
-                <span class="badge badge-warning">🐱 سطح {{ acc.pishi_level_current }}/{{ acc.pishi_level_max }}</span>
-                {% endif %}
-                {% endif %}
-
-                {% if acc.pishi_rank_number > 0 %}
-                <span class="badge badge-ghost">🏆 مقام {{ acc.pishi_rank_number }}</span>
-                {% endif %}
-
-                {% if acc.pishi_mps > 0 %}
-                <span class="badge badge-info">⚡ {{ acc.pishi_mps }}/ثانیه</span>
-                {% endif %}
-
-                {% if acc.pishi_capacity > 0 %}
-                <span class="badge badge-ghost">📦 {{ "{:,}".format(acc.pishi_capacity) }}</span>
-                {% endif %}
-
-                {% if acc.pishi_upgrade_cost > 0 %}
-                <span class="badge badge-ghost">⬆️ {{ "{:,}".format(acc.pishi_upgrade_cost) }}</span>
-                {% endif %}
-            </div>
-            {% endif %}
-
-            <!-- Ranks -->
-            <p class="text-xs opacity-60 mt-1">
-                رتبه‌ها: 💰 {{ "{:,}".format(acc.balance_rank or 0) }} |
-                🐾 {{ "{:,}".format(acc.meow_rank or 0) }} |
-                🐈 {{ "{:,}".format(acc.street_cats_rank or 0) }}
-                {% if acc.level_progress %} | ⭐️ {{ acc.level_progress }} {% endif %}
+            <h3 class="font-bold text-lg mb-1">حذف اکانت</h3>
+            <p class="text-sm opacity-60 mb-4">
+                آیا از حذف اکانت <span id="delete-modal-name" class="font-bold text-error"></span> مطمئن هستید؟
+                <br>این عمل غیرقابل بازگشت است.
             </p>
-
-            <!-- Live countdown timers -->
-            <div class="text-xs opacity-60 mt-1 flex flex-col gap-0.5">
-                {% if acc.meow_enabled %}
-                <span>⏱ میو: <span class="countdown-timer" data-timestamp="{{ acc.meow_next_run }}">--:--</span></span>
-                {% endif %}
-                {% if acc.pishi_enabled %}
-                <span>⏱ پیشی: <span class="countdown-timer"
-                        data-timestamp="{{ acc.pishi_next_run }}">--:--</span></span>
-                {% endif %}
-                {% if acc.fishing_enabled %}
-                <span>⏱ ماهی: <span class="countdown-timer"
-                        data-timestamp="{{ acc.fishing_next_run }}">--:--</span></span>
-                {% endif %}
-            </div>
-
-            <!-- Feature toggles -->
-            <div class="flex flex-wrap gap-1 mt-1">
-                <span class="badge badge-info gap-1">میو: {{ 'روشن' if acc.meow_enabled else 'خاموش' }}</span>
-                <span class="badge badge-warning text-neutral gap-1">پیشی: {{ 'روشن' if acc.pishi_enabled else 'خاموش'
-                    }}</span>
-                <span class="badge badge-primary gap-1">ماهی: {{ 'روشن' if acc.fishing_enabled else 'خاموش' }}</span>
-                <span class="badge badge-success gap-1">نجات: {{ 'روشن' if acc.rescue_enabled else 'خاموش' }}</span>
-            </div>
-
-            <!-- Groups count -->
-            <p class="text-sm text-base-content/70 mt-1">
-                گروه‌ها: {{ acc.selected_groups | length }} انتخاب شده
-            </p>
-
-            <!-- Actions -->
-            <div class="card-actions justify-end mt-4">
-                <a href="{{ url_for('account_settings', uid=acc.uid) }}"
-                    class="btn btn-outline btn-primary btn-sm">تنظیمات</a>
-                <a href="{{ url_for('account_logs', uid=acc.uid) }}" class="btn btn-outline btn-ghost btn-sm">لاگ‌ها</a>
-
-                <form action="{{ url_for('toggle_account', uid=acc.uid) }}" method="POST">
-                    <button type="submit"
-                        class="btn btn-sm {% if acc.is_active %}btn-outline btn-error{% else %}btn-outline btn-success{% endif %}">
-                        {{ 'توقف' if acc.is_active else 'شروع' }}
+            <div class="modal-action mt-0">
+                <button class="btn btn-ghost btn-sm" onclick="document.getElementById('delete-modal').close()">انصراف</button>
+                <form id="delete-modal-form" method="POST">
+                    <button type="submit" class="btn btn-error btn-sm gap-1">
+                        <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                        حذف
                     </button>
                 </form>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
 
-                <button type="button" class="btn btn-outline btn-error btn-sm delete-btn"
-                    data-action="{{ url_for('delete_account', uid=acc.uid) }}"
-                    data-name="{{ acc.account_name or acc.uid }}">
-                    حذف
+    <!-- Bulk Stop Modal -->
+    <dialog id="bulk-stop-modal" class="modal">
+        <div class="modal-box glass-card border-0">
+            <div class="w-12 h-12 rounded-full bg-warning/10 flex items-center justify-center mb-4">
+                <i data-lucide="square" class="w-6 h-6 text-warning"></i>
+            </div>
+            <h3 class="font-bold text-lg mb-1">توقف اکانت‌ها</h3>
+            <p class="text-sm opacity-60 mb-4">آیا مطمئن هستید که می‌خواهید اکانت‌های انتخاب‌شده را متوقف کنید؟</p>
+            <div class="modal-action mt-0">
+                <button class="btn btn-ghost btn-sm" onclick="document.getElementById('bulk-stop-modal').close()">انصراف</button>
+                <button class="btn btn-error btn-sm gap-1" @click="bulkAction('stop'); document.getElementById('bulk-stop-modal').close()">
+                    <i data-lucide="square" class="w-3.5 h-3.5"></i>
+                    توقف
                 </button>
             </div>
         </div>
-    </div>
-    {% endfor %}
-</div>
-{% else %}
-<div role="alert" class="alert alert-info mt-5 shadow-lg justify-center">
-    <span>هنوز اکانتی اضافه نکرده‌اید. روی "افزودن اکانت جدید" کلیک کنید.</span>
-</div>
-{% endif %}
+        <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
 
-<!-- Transfer Confirmation Modal -->
-<dialog id="transfer-modal" class="modal">
-    <div class="modal-box">
-        <h3 class="font-bold text-lg">💸 انتقال موجودی</h3>
-        <p class="py-4">آیا مطمئن هستید که می‌خواهید تمام موجودی همه اکانت‌ها را به کاربر <span
-                id="transfer-modal-target" class="font-bold"></span> منتقل کنید؟</p>
-        <div class="modal-action">
-            <button class="btn btn-ghost" onclick="hideTransferModal()">انصراف</button>
-            <button class="btn btn-warning" onclick="confirmTransfer()">انتقال</button>
+    <!-- Transfer Modal -->
+    <dialog id="transfer-modal" class="modal">
+        <div class="modal-box glass-card border-0">
+            <div class="w-12 h-12 rounded-full bg-warning/10 flex items-center justify-center mb-4">
+                <i data-lucide="send" class="w-6 h-6 text-warning"></i>
+            </div>
+            <h3 class="font-bold text-lg mb-1">انتقال موجودی</h3>
+            <p class="text-sm opacity-60 mb-4">
+                تمام موجودی همه اکانت‌های عضو گروه بکاپ به کاربر
+                <span id="transfer-modal-target" class="font-bold text-warning"></span>
+                منتقل می‌شود.
+            </p>
+            <div class="modal-action mt-0">
+                <button class="btn btn-ghost btn-sm" onclick="document.getElementById('transfer-modal').close()">انصراف</button>
+                <button class="btn btn-warning btn-sm gap-1" onclick="confirmTransfer()">
+                    <i data-lucide="send" class="w-3.5 h-3.5"></i>
+                    انتقال
+                </button>
+            </div>
         </div>
-    </div>
-    <form method="dialog" class="modal-backdrop">
-        <button>close</button>
-    </form>
-</dialog>
+        <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
 
-<!-- Delete Confirmation Modal -->
-<dialog id="delete-modal" class="modal">
-    <div class="modal-box">
-        <h3 class="font-bold text-lg">🗑️ حذف اکانت</h3>
-        <p class="py-4">آیا از حذف اکانت <span id="delete-modal-name" class="font-bold"></span> مطمئن هستید؟ این عمل
-            غیرقابل بازگشت است.</p>
-        <div class="modal-action">
-            <button class="btn btn-ghost" onclick="hideDeleteModal()">انصراف</button>
-            <form id="delete-modal-form" method="POST">
-                <button type="submit" class="btn btn-error">حذف</button>
+    <!-- Global Tools -->
+    <div class="glass-card rounded-2xl p-4 mt-6">
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <form method="POST" action="{{ url_for('save_backup_group') }}" data-loading class="flex flex-col gap-2">
+                <label class="label p-0"><span class="label-text font-bold text-sm">گروه بکاپ</span></label>
+                <div class="join w-full">
+                    <input type="text" name="backup_group_id" dir="ltr" placeholder="-100123456789"
+                        value="{{ backup_group_id or '' }}" class="input input-bordered join-item w-full input-sm bg-base-200/50" />
+                    <button type="submit" class="btn btn-primary join-item btn-sm">ذخیره</button>
+                </div>
             </form>
-        </div>
-    </div>
-    <form method="dialog" class="modal-backdrop">
-        <button>close</button>
-    </form>
-</dialog>
 
-<!-- Bulk Stop Confirmation Modal -->
-<dialog id="bulk-stop-modal" class="modal">
-    <div class="modal-box">
-        <h3 class="font-bold text-lg">⏹️ توقف اکانت‌ها</h3>
-        <p class="py-4">آیا مطمئن هستید که می‌خواهید اکانت‌های انتخاب‌شده را متوقف کنید؟</p>
-        <div class="modal-action">
-            <button class="btn btn-ghost" onclick="hideBulkStopModal()">انصراف</button>
-            <button class="btn btn-error" onclick="confirmBulkStop()">توقف</button>
+            <div class="flex flex-col gap-2">
+                <span class="label-text font-bold text-sm">بروزرسانی</span>
+                <div class="flex gap-2">
+                    <form method="POST" action="{{ url_for('update_status') }}" data-loading class="flex-1">
+                        <button type="submit" class="btn btn-outline btn-secondary btn-sm w-full gap-1">
+                            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> آپدیت
+                        </button>
+                    </form>
+                    <form method="POST" action="{{ url_for('update_profiles') }}" data-loading class="flex-1">
+                        <button type="submit" class="btn btn-outline btn-info btn-sm w-full gap-1">
+                            <i data-lucide="candy" class="w-3.5 h-3.5"></i> میوهام
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <div class="flex flex-col gap-2">
+                <span class="label-text font-bold text-sm">انتقال موجودی</span>
+                <div class="join w-full">
+                    <input type="text" id="transfer-target" dir="ltr" placeholder="12345678"
+                        class="input input-bordered join-item w-full input-sm bg-base-200/50" />
+                    <button type="button" class="btn btn-warning join-item btn-sm gap-1" id="transfer-btn">
+                        <i data-lucide="send" class="w-3.5 h-3.5"></i> انتقال
+                    </button>
+                </div>
+            </div>
         </div>
     </div>
-    <form method="dialog" class="modal-backdrop">
-        <button>close</button>
-    </form>
-</dialog>
+
+</div>
 
 <script>
-    // Reveal masked phone
-    document.querySelectorAll(".reveal-phone").forEach(function (btn) {
-        btn.addEventListener("click", async function () {
-            const phoneSpan = btn.parentElement.querySelector(".masked-phone");
+    function dashboard() {
+        return {
+            searchQuery: '',
+            statusFilter: '',
+            featureFilter: '',
+            sortBy: 'balance_desc',
+            selectMode: false,
+            selectedUids: [],
+            showBulkStopModal: false,
+            activeJobs: [],
 
-            if (btn.dataset.revealed === "1") {
-                phoneSpan.textContent = "***";
-                btn.dataset.revealed = "0";
-                btn.textContent = "👁";
-                return;
-            }
+            init() {
+                this.applyFilters();
+                this.pollJobs();
+                setInterval(() => this.pollJobs(), 5000);
+                setInterval(() => updateCountdownTimers(), 1000);
+                updateCountdownTimers();
 
-            try {
-                const response = await fetch(btn.dataset.url);
-                const data = await response.json();
+                // Delete buttons
+                document.querySelectorAll('.delete-btn').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        document.getElementById('delete-modal-name').textContent = btn.dataset.name;
+                        document.getElementById('delete-modal-form').action = btn.dataset.action;
+                        document.getElementById('delete-modal').showModal();
+                    });
+                });
 
-                if (data.phone) {
-                    phoneSpan.textContent = data.phone;
-                    phoneSpan.setAttribute("dir", "ltr");
-                    btn.dataset.revealed = "1";
-                    btn.textContent = "🙈";
+                // Reveal phone buttons
+                document.querySelectorAll('.reveal-phone').forEach(btn => {
+                    btn.addEventListener('click', async () => {
+                        const phoneSpan = btn.parentElement.querySelector('.masked-phone');
+                        if (btn.dataset.revealed === '1') {
+                            phoneSpan.textContent = '***';
+                            btn.dataset.revealed = '0';
+                            return;
+                        }
+                        try {
+                            const res = await fetch(btn.dataset.url);
+                            const data = await res.json();
+                            if (data.phone) {
+                                phoneSpan.textContent = data.phone;
+                                btn.dataset.revealed = '1';
+                            }
+                        } catch (e) { console.error(e); }
+                    });
+                });
+
+                // Transfer button
+                const transferBtn = document.getElementById('transfer-btn');
+                if (transferBtn) {
+                    transferBtn.addEventListener('click', () => {
+                        const target = document.getElementById('transfer-target').value.trim();
+                        if (!target) { alert('آیدی کاربر را وارد کنید'); return; }
+                        document.getElementById('transfer-modal-target').textContent = target;
+                        document.getElementById('transfer-modal').showModal();
+                    });
                 }
-            } catch (e) {
-                console.error(e);
+
+                // Watch filters
+                this.$watch('searchQuery', () => this.applyFilters());
+                this.$watch('statusFilter', () => this.applyFilters());
+                this.$watch('featureFilter', () => this.applyFilters());
+                this.$watch('sortBy', () => this.applySort());
+            },
+
+            applyFilters() {
+                const q = this.searchQuery.toLowerCase();
+                document.querySelectorAll('.account-card').forEach(card => {
+                    let visible = true;
+                    if (q && !card.dataset.search.includes(q)) visible = false;
+                    if (this.statusFilter !== '' && card.dataset.active !== this.statusFilter) visible = false;
+                    if (this.featureFilter === 'meow' && card.dataset.meow !== '1') visible = false;
+                    if (this.featureFilter === 'pishi' && card.dataset.pishi !== '1') visible = false;
+                    if (this.featureFilter === 'fishing' && card.dataset.fishing !== '1') visible = false;
+                    if (this.featureFilter === 'rescue' && card.dataset.rescue !== '1') visible = false;
+                    card.style.display = visible ? '' : 'none';
+                });
+                this.applySort();
+            },
+
+            applySort() {
+                const grid = document.getElementById('accounts-grid');
+                if (!grid) return;
+                const cards = Array.from(grid.querySelectorAll('.account-card'));
+                cards.sort((a, b) => {
+                    if (this.sortBy === 'balance_desc') return parseInt(b.dataset.balance) - parseInt(a.dataset.balance);
+                    if (this.sortBy === 'balance_asc') return parseInt(a.dataset.balance) - parseInt(b.dataset.balance);
+                    if (this.sortBy === 'name_asc') return (a.dataset.name || '').localeCompare(b.dataset.name || '');
+                    return 0;
+                });
+                cards.forEach(card => grid.appendChild(card));
+            },
+
+            async toggleFeature(uid, feature, newState) {
+                try {
+                    await fetch(`/account/${uid}/toggle_feature`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ feature, enabled: newState })
+                    });
+                    location.reload();
+                } catch (e) { console.error(e); }
+            },
+
+            bulkAction(action) {
+                if (this.selectedUids.length === 0) { alert('هیچ اکانتی انتخاب نشده است'); return; }
+                const url = action === 'start' ? "{{ url_for('bulk_start') }}" : "{{ url_for('bulk_stop') }}";
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = url;
+                this.selectedUids.forEach(uid => {
+                    const input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.name = 'uids[]';
+                    input.value = uid;
+                    form.appendChild(input);
+                });
+                document.body.appendChild(form);
+                form.submit();
+            },
+
+            async pollJobs() {
+                try {
+                    const res = await fetch("{{ url_for('active_jobs') }}");
+                    this.activeJobs = await res.json();
+                } catch (e) { this.activeJobs = []; }
+            },
+
+            getJobLabel(type) {
+                const labels = { update_status: '🔄 آپدیت وضعیت', update_profiles: '🍬 بروزرسانی پروفایل', transfer: '💸 انتقال' };
+                return labels[type] || type;
             }
-        });
-    });
-
-    // Live countdown timers
-    function updateCountdownTimers() {
-        const now = Math.floor(Date.now() / 1000);
-
-        document.querySelectorAll(".countdown-timer").forEach(function (el) {
-            const timestamp = parseInt(el.dataset.timestamp || "0");
-
-            if (timestamp <= 0) {
-                el.textContent = "آماده";
-                el.classList.add("text-success");
-                return;
-            }
-
-            const diff = timestamp - now;
-
-            if (diff <= 0) {
-                el.textContent = "آماده";
-                el.classList.add("text-success");
-                return;
-            }
-
-            el.classList.remove("text-success");
-
-            const hours = Math.floor(diff / 3600);
-            const minutes = Math.floor((diff % 3600) / 60);
-            const seconds = diff % 60;
-
-            if (hours > 0) {
-                el.textContent = `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-            } else {
-                el.textContent = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-            }
-        });
-    }
-
-    updateCountdownTimers();
-    setInterval(updateCountdownTimers, 1000);
-
-    // Search/filter/sort
-    const searchInput = document.getElementById("account-search");
-    const statusFilter = document.getElementById("status-filter");
-    const featureFilter = document.getElementById("feature-filter");
-    const sortBy = document.getElementById("sort-by");
-    const grid = document.getElementById("accounts-grid");
-
-    function applyDashboardFilters() {
-        const query = (searchInput.value || "").toLowerCase();
-        const status = statusFilter.value;
-        const feature = featureFilter.value;
-
-        document.querySelectorAll(".account-card").forEach(function (card) {
-            let visible = true;
-
-            if (query && !card.dataset.search.includes(query)) {
-                visible = false;
-            }
-
-            if (status !== "" && card.dataset.active !== status) {
-                visible = false;
-            }
-
-            if (feature === "meow" && card.dataset.meow !== "1") visible = false;
-            if (feature === "pishi" && card.dataset.pishi !== "1") visible = false;
-            if (feature === "fishing" && card.dataset.fishing !== "1") visible = false;
-            if (feature === "rescue" && card.dataset.rescue !== "1") visible = false;
-
-            card.style.display = visible ? "" : "none";
-        });
-    }
-
-    function applyDashboardSort() {
-        const cards = Array.from(document.querySelectorAll(".account-card"));
-
-        cards.sort(function (a, b) {
-            if (sortBy.value === "balance_desc") {
-                return parseInt(b.dataset.balance) - parseInt(a.dataset.balance);
-            }
-
-            if (sortBy.value === "balance_asc") {
-                return parseInt(a.dataset.balance) - parseInt(b.dataset.balance);
-            }
-
-            if (sortBy.value === "name_asc") {
-                return (a.dataset.name || "").localeCompare(b.dataset.name || "");
-            }
-
-            return 0;
-        });
-
-        cards.forEach(function (card) {
-            grid.appendChild(card);
-        });
-    }
-
-    if (searchInput) {
-        searchInput.addEventListener("input", applyDashboardFilters);
-        statusFilter.addEventListener("change", applyDashboardFilters);
-        featureFilter.addEventListener("change", applyDashboardFilters);
-        sortBy.addEventListener("change", applyDashboardSort);
-
-        applyDashboardFilters();
-        applyDashboardSort();
-    }
-
-    const transferBtn = document.getElementById("transfer-btn");
-
-    if (transferBtn) {
-        transferBtn.addEventListener("click", function () {
-            showTransferModal();
-        });
-    }
-
-    // Transfer modal
-    function showTransferModal() {
-        const target = document.getElementById("transfer-target").value.trim();
-
-        if (!target) {
-            alert("لطفا آیدی کاربر را وارد کنید");
-            return;
         }
-
-        document.getElementById("transfer-modal-target").textContent = target;
-        document.getElementById("transfer-modal").showModal();
-    }
-
-    function hideTransferModal() {
-        document.getElementById("transfer-modal").close();
     }
 
     function confirmTransfer() {
-        const target = document.getElementById("transfer-target").value.trim();
-
-        const form = document.createElement("form");
-        form.method = "POST";
+        const target = document.getElementById('transfer-target').value.trim();
+        const form = document.createElement('form');
+        form.method = 'POST';
         form.action = "{{ url_for('transfer') }}";
-
-        const input = document.createElement("input");
-        input.type = "hidden";
-        input.name = "target_user_id";
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'target_user_id';
         input.value = target;
         form.appendChild(input);
-
         document.body.appendChild(form);
         form.submit();
     }
 
-    // Delete modal — using data attributes to avoid quote issues
-    document.querySelectorAll(".delete-btn").forEach(function (btn) {
-        btn.addEventListener("click", function () {
-            showDeleteModal(btn.dataset.action, btn.dataset.name);
-        });
-    });
-
-    function showDeleteModal(actionUrl, accountName) {
-        document.getElementById("delete-modal-name").textContent = accountName;
-        document.getElementById("delete-modal-form").action = actionUrl;
-        document.getElementById("delete-modal").showModal();
-    }
-
-    function hideDeleteModal() {
-        document.getElementById("delete-modal").close();
-    }
-
-    const bulkStop = document.getElementById("bulk-stop");
-
-    if (bulkStop) {
-        bulkStop.addEventListener("click", function () {
-            showBulkStopModal();
+    function updateCountdownTimers() {
+        const now = Math.floor(Date.now() / 1000);
+        document.querySelectorAll('.countdown-timer').forEach(el => {
+            const ts = parseInt(el.dataset.timestamp || '0');
+            if (ts <= 0) { el.textContent = 'آماده'; el.className = 'text-sm font-bold text-success countdown-timer'; return; }
+            const diff = ts - now;
+            if (diff <= 0) { el.textContent = 'آماده'; el.className = 'text-sm font-bold text-success countdown-timer'; return; }
+            const h = Math.floor(diff / 3600);
+            const m = Math.floor((diff % 3600) / 60);
+            const s = diff % 60;
+            if (diff < 300) el.className = 'text-sm font-bold text-success countdown-timer';
+            else if (diff < 1800) el.className = 'text-sm font-bold text-warning countdown-timer';
+            else el.className = 'text-sm font-bold countdown-timer';
+            el.textContent = h > 0
+                ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
+                : `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
         });
     }
-
-    // Bulk stop modal
-    function showBulkStopModal() {
-        const selected = Array.from(document.querySelectorAll(".bulk-check:checked"));
-
-        if (selected.length === 0) {
-            alert("هیچ اکانتی انتخاب نشده است");
-            return;
-        }
-
-        document.getElementById("bulk-stop-modal").showModal();
-    }
-
-    function hideBulkStopModal() {
-        document.getElementById("bulk-stop-modal").close();
-    }
-
-    function confirmBulkStop() {
-        submitBulk("{{ url_for('bulk_stop') }}");
-    }
-
-    // Bulk start (no confirmation needed)
-    const bulkStart = document.getElementById("bulk-start");
-
-    if (bulkStart) {
-        bulkStart.addEventListener("click", function () {
-            submitBulk("{{ url_for('bulk_start') }}");
-        });
-    }
-
-    function submitBulk(actionUrl) {
-        const selected = Array.from(document.querySelectorAll(".bulk-check:checked")).map(function (checkbox) {
-            return checkbox.value;
-        });
-
-        if (selected.length === 0) {
-            alert("هیچ اکانتی انتخاب نشده است");
-            return;
-        }
-
-        const form = document.createElement("form");
-        form.method = "POST";
-        form.action = actionUrl;
-
-        selected.forEach(function (uid) {
-            const input = document.createElement("input");
-            input.type = "hidden";
-            input.name = "uids[]";
-            input.value = uid;
-            form.appendChild(input);
-        });
-
-        document.body.appendChild(form);
-        form.submit();
-    }
-
-    // Poll active jobs
-    function pollActiveJobs() {
-        fetch("{{ url_for('active_jobs') }}")
-            .then(function (response) { return response.json(); })
-            .then(function (jobs) {
-                const container = document.getElementById("active-jobs-container");
-
-                if (!container) return;
-
-                if (jobs.length === 0) {
-                    const jobSection = container.closest(".card");
-                    if (jobSection) {
-                        jobSection.style.display = "none";
-                    }
-                    return;
-                }
-
-                container.innerHTML = "";
-
-                jobs.forEach(function (job) {
-                    const div = document.createElement("div");
-                    div.className = "flex items-center gap-3";
-                    div.dataset.jobId = job.id;
-
-                    let label = job.type;
-                    if (job.type === "update_status") label = "🔄 آپدیت وضعیت";
-                    else if (job.type === "update_profiles") label = "🍬 بروزرسانی پروفایل";
-                    else if (job.type === "transfer") label = "💸 انتقال موجودی";
-
-                    div.innerHTML = `
-                        <span class="text-sm">${label}</span>
-                        <progress class="progress progress-primary w-40" value="${job.processed_accounts}" max="${job.total_accounts}"></progress>
-                        <span class="text-xs opacity-60">${job.processed_accounts}/${job.total_accounts}</span>
-                    `;
-
-                    container.appendChild(div);
-                });
-            })
-            .catch(function (e) {
-                console.error("Failed to poll jobs:", e);
-            });
-    }
-
-    // Poll every 5 seconds
-    setInterval(pollActiveJobs, 5000);
 </script>
 {% endblock %}

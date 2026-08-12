@@ -1,30 +1,30 @@
 {% extends "base.html" %}
 {% block title %}Automation{% endblock %}
 {% block content %}
-<div class="card bg-base-100 shadow-xl max-w-3xl mx-auto">
-    <div class="card-body">
-        <h2 class="card-title text-2xl mb-2">
-            🎛️ Global Automation
-        </h2>
-        <p class="text-sm opacity-60 mb-4">
-            This panel controls global feature toggles separately from per-account settings.
-        </p>
+<div class="max-w-2xl mx-auto">
+    <div class="glass-card rounded-2xl overflow-hidden">
+        <div class="p-6 border-b border-base-content/5">
+            <h2 class="text-xl font-bold flex items-center gap-2">
+                <i data-lucide="sliders-horizontal" class="w-5 h-5 text-primary"></i>
+                Global Automation
+            </h2>
+            <p class="text-xs opacity-50 mt-1">کنترل سراسری فیچرها جدا از تنظیمات هر اکانت</p>
+        </div>
 
-        <form method="POST">
-            <div class="flex flex-col gap-4">
+        <form method="POST" class="p-6">
+            <div class="space-y-3">
                 {% for key, label in items %}
-                <div class="form-control">
-                    <label class="cursor-pointer label justify-start gap-3 p-0">
-                        <input type="checkbox" name="{{ key }}" class="toggle toggle-primary"
-                            {% if states.get(key) %}checked{% endif %}>
-                        <span class="label-text font-bold text-lg">{{ label }}</span>
-                    </label>
-                </div>
+                <label class="cursor-pointer flex items-center justify-between p-3 rounded-xl bg-base-200/50 hover:bg-base-200 transition-colors">
+                    <span class="text-sm font-medium">{{ label }}</span>
+                    <input type="checkbox" name="{{ key }}" class="toggle toggle-primary toggle-sm"
+                        {% if states.get(key) %}checked{% endif %}>
+                </label>
                 {% endfor %}
             </div>
 
-            <button type="submit" class="btn btn-primary w-full mt-6">
-                Save Automation Settings
+            <button type="submit" class="btn btn-primary w-full mt-6 gap-2">
+                <i data-lucide="save" class="w-4 h-4"></i>
+                ذخیره تنظیمات
             </button>
         </form>
     </div>
