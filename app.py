@@ -46,6 +46,12 @@ from database import (
     get_all_web_users_with_counts,
     set_user_disabled,
     mask_phone,
+    create_job,
+    finish_job,
+    get_active_jobs_for_user,
+    get_recent_jobs_for_user,
+    get_job_by_id,
+    get_command_template,
 )
 
 from clients import (
@@ -344,15 +350,17 @@ def dashboard():
     active_count = sum(1 for acc in accounts if acc.get("is_active"))
     error_count = sum(1 for acc in accounts if acc.get("session_status") == "error")
 
+    active_jobs_list = get_active_jobs_for_user(session["user_id"])
+
     return render_template(
         "dashboard.html",
         accounts=accounts,
         backup_group_id=backup_group_id,
         total_balance=total_balance,
         active_count=active_count,
-        error_count=error_count
+        error_count=error_count,
+        active_jobs=active_jobs_list
     )
-
 
 # ============================================================
 # Add Telegram account
@@ -703,8 +711,16 @@ def save_backup_group():
 @app.route("/update_status", methods=["POST"])
 @login_required
 def update_status():
+    accounts = get_tg_accounts_for_user(session["user_id"])
+
+    if not accounts:
+        flash("هیچ اکانتی برای بروزرسانی وجود ندارد", "warning")
+        return redirect(url_for("dashboard"))
+
+    job_id = create_job(session["user_id"], "update_status", len(accounts))
+
     result = safe_run_async(
-        workers.update_status_for_user(session["user_id"]),
+        workers.update_status_for_user(session["user_id"], job_id=job_id),
         timeout=110
     )
 
@@ -726,8 +742,16 @@ def update_profiles():
         flash("ابتدا آیدی گروه بکاپ را تنظیم کنید", "danger")
         return redirect(url_for("dashboard"))
 
+    accounts = get_tg_accounts_for_user(session["user_id"])
+
+    if not accounts:
+        flash("هیچ اکانتی برای بروزرسانی وجود ندارد", "warning")
+        return redirect(url_for("dashboard"))
+
+    job_id = create_job(session["user_id"], "update_profiles", len(accounts))
+
     result = safe_run_async(
-        workers.update_profiles_for_user(session["user_id"]),
+        workers.update_profiles_for_user(session["user_id"], job_id=job_id),
         timeout=110
     )
 
@@ -755,8 +779,16 @@ def transfer():
         flash("آیدی کاربر نامعتبر است", "danger")
         return redirect(url_for("dashboard"))
 
+    accounts = get_tg_accounts_for_user(session["user_id"])
+
+    if not accounts:
+        flash("هیچ اکانتی برای انتقال وجود ندارد", "warning")
+        return redirect(url_for("dashboard"))
+
+    job_id = create_job(session["user_id"], "transfer", len(accounts))
+
     result = safe_run_async(
-        workers.transfer_for_user(session["user_id"], target),
+        workers.transfer_for_user(session["user_id"], target, job_id=job_id),
         timeout=110
     )
 
@@ -766,6 +798,20 @@ def transfer():
         flash("دستور انتقال برای اکانت‌ها ارسال شد", "success")
 
     return redirect(url_for("dashboard"))
+
+
+@app.route("/jobs/active")
+@login_required
+def active_jobs():
+    jobs = get_active_jobs_for_user(session["user_id"])
+    return jsonify(jobs)
+
+
+@app.route("/jobs/recent")
+@login_required
+def recent_jobs():
+    jobs = get_recent_jobs_for_user(session["user_id"], limit=10)
+    return jsonify(jobs)
 
 
 # ============================================================
@@ -995,6 +1041,31 @@ EDITABLE_SETTINGS = [
         "key": "RESCUE_NORMAL_CLICK_DELAY",
         "label": "Rescue cat normal delay after first 4 clicks (seconds)",
         "type": "float"
+    },
+        {
+        "key": "MEOW_COMMAND",
+        "label": "Meow command",
+        "type": "text"
+    },
+    {
+        "key": "PISHI_COMMAND",
+        "label": "Pishi command",
+        "type": "text"
+    },
+    {
+        "key": "FISHING_COMMAND",
+        "label": "Fishing command",
+        "type": "text"
+    },
+    {
+        "key": "PROFILE_COMMAND",
+        "label": "Profile command (میوهام)",
+        "type": "text"
+    },
+    {
+        "key": "TRANSFER_COMMAND_TEMPLATE",
+        "label": "Transfer command template ({amount} {target})",
+        "type": "text"
     },
 ]
 

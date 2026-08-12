@@ -39,6 +39,31 @@
     </div>
 </div>
 
+<!-- Active Jobs -->
+{% if active_jobs %}
+<div class="card bg-base-100 shadow mb-6">
+    <div class="card-body p-4">
+        <h3 class="font-bold text-sm mb-2">⏳ عملیات در حال اجرا</h3>
+        <div id="active-jobs-container" class="flex flex-col gap-2">
+            {% for job in active_jobs %}
+            <div class="flex items-center gap-3" data-job-id="{{ job.id }}">
+                <span class="text-sm">
+                    {% if job.type == 'update_status' %}🔄 آپدیت وضعیت
+                    {% elif job.type == 'update_profiles' %}🍬 بروزرسانی پروفایل
+                    {% elif job.type == 'transfer' %}💸 انتقال موجودی
+                    {% else %}{{ job.type }}{% endif %}
+                </span>
+                <progress class="progress progress-primary w-40" value="{{ job.processed_accounts }}"
+                    max="{{ job.total_accounts }}"></progress>
+                <span class="text-xs opacity-60 job-progress-text">{{ job.processed_accounts }}/{{ job.total_accounts
+                    }}</span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <!-- Global Tools -->
 <div class="card bg-base-100 shadow-xl mb-6">
     <div class="card-body gap-4">
@@ -71,18 +96,16 @@
             </div>
 
             <!-- Transfer -->
-            <form method="POST" action="{{ url_for('transfer') }}" data-loading class="flex flex-col gap-2">
-                <label class="label p-0">
-                    <span class="label-text font-bold">انتقال موجودی به کاربر</span>
-                </label>
+            <div class="flex flex-col gap-2">
+                <span class="label-text font-bold">انتقال موجودی به کاربر</span>
                 <div class="join w-full">
-                    <input type="text" name="target_user_id" dir="ltr" placeholder="12345678"
-                        class="input input-bordered join-item w-full" required />
-                    <button type="submit" class="btn btn-warning join-item"
-                        onclick="return confirm('تمام موجودی همه اکانت‌های عضو گروه بکاپ منتقل شود؟');">انتقال</button>
+                    <input type="text" id="transfer-target" dir="ltr" placeholder="12345678"
+                        class="input input-bordered join-item w-full" />
+                    <button type="button" class="btn btn-warning join-item" id="transfer-btn">انتقال</button>
                 </div>
-                <span class="label-text-alt opacity-60">کل موجودی همه اکانت‌های عضو گروه بکاپ به آیدی واردشده منتقل می‌شود.</span>
-            </form>
+                <span class="label-text-alt opacity-60">کل موجودی همه اکانت‌های عضو گروه بکاپ به آیدی واردشده منتقل
+                    می‌شود.</span>
+            </div>
         </div>
     </div>
 </div>
@@ -127,12 +150,9 @@
     {% for acc in accounts %}
     <div class="card bg-base-100 shadow-xl account-card"
         data-search="{{ (acc.account_name or '')|lower }} {{ acc.uid|lower }}"
-        data-active="{{ 1 if acc.is_active else 0 }}"
-        data-balance="{{ acc.balance or 0 }}"
-        data-name="{{ acc.account_name or '' }}"
-        data-meow="{{ 1 if acc.meow_enabled else 0 }}"
-        data-pishi="{{ 1 if acc.pishi_enabled else 0 }}"
-        data-fishing="{{ 1 if acc.fishing_enabled else 0 }}"
+        data-active="{{ 1 if acc.is_active else 0 }}" data-balance="{{ acc.balance or 0 }}"
+        data-name="{{ acc.account_name or '' }}" data-meow="{{ 1 if acc.meow_enabled else 0 }}"
+        data-pishi="{{ 1 if acc.pishi_enabled else 0 }}" data-fishing="{{ 1 if acc.fishing_enabled else 0 }}"
         data-rescue="{{ 1 if acc.rescue_enabled else 0 }}">
         <div class="card-body">
             <!-- Title + Checkbox -->
@@ -187,15 +207,36 @@
                 <span class="badge badge-primary">⭐️ سطح {{ acc.level or 0 }}</span>
                 <span class="badge badge-secondary">🐾 {{ acc.meow_count or 0 }}</span>
                 <span class="badge badge-accent">🐈 {{ acc.street_cats or 0 }}</span>
+            </div>
 
+            <!-- Pishi info -->
+            {% if acc.pishi_level_max > 0 or acc.pishi_mps > 0 or acc.pishi_capacity > 0 %}
+            <div class="flex flex-wrap gap-1 mt-1">
                 {% if acc.pishi_level_max > 0 %}
-                    {% if acc.pishi_level_current >= acc.pishi_level_max %}
-                    <span class="badge badge-success">🐱 سطح {{ acc.pishi_level_current }}/{{ acc.pishi_level_max }}</span>
-                    {% else %}
-                    <span class="badge badge-warning">🐱 سطح {{ acc.pishi_level_current }}/{{ acc.pishi_level_max }}</span>
-                    {% endif %}
+                {% if acc.pishi_level_current >= acc.pishi_level_max %}
+                <span class="badge badge-success">🐱 سطح {{ acc.pishi_level_current }}/{{ acc.pishi_level_max }}</span>
+                {% else %}
+                <span class="badge badge-warning">🐱 سطح {{ acc.pishi_level_current }}/{{ acc.pishi_level_max }}</span>
+                {% endif %}
+                {% endif %}
+
+                {% if acc.pishi_rank_number > 0 %}
+                <span class="badge badge-ghost">🏆 مقام {{ acc.pishi_rank_number }}</span>
+                {% endif %}
+
+                {% if acc.pishi_mps > 0 %}
+                <span class="badge badge-info">⚡ {{ acc.pishi_mps }}/ثانیه</span>
+                {% endif %}
+
+                {% if acc.pishi_capacity > 0 %}
+                <span class="badge badge-ghost">📦 {{ "{:,}".format(acc.pishi_capacity) }}</span>
+                {% endif %}
+
+                {% if acc.pishi_upgrade_cost > 0 %}
+                <span class="badge badge-ghost">⬆️ {{ "{:,}".format(acc.pishi_upgrade_cost) }}</span>
                 {% endif %}
             </div>
+            {% endif %}
 
             <!-- Ranks -->
             <p class="text-xs opacity-60 mt-1">
@@ -205,10 +246,26 @@
                 {% if acc.level_progress %} | ⭐️ {{ acc.level_progress }} {% endif %}
             </p>
 
+            <!-- Live countdown timers -->
+            <div class="text-xs opacity-60 mt-1 flex flex-col gap-0.5">
+                {% if acc.meow_enabled %}
+                <span>⏱ میو: <span class="countdown-timer" data-timestamp="{{ acc.meow_next_run }}">--:--</span></span>
+                {% endif %}
+                {% if acc.pishi_enabled %}
+                <span>⏱ پیشی: <span class="countdown-timer"
+                        data-timestamp="{{ acc.pishi_next_run }}">--:--</span></span>
+                {% endif %}
+                {% if acc.fishing_enabled %}
+                <span>⏱ ماهی: <span class="countdown-timer"
+                        data-timestamp="{{ acc.fishing_next_run }}">--:--</span></span>
+                {% endif %}
+            </div>
+
             <!-- Feature toggles -->
             <div class="flex flex-wrap gap-1 mt-1">
                 <span class="badge badge-info gap-1">میو: {{ 'روشن' if acc.meow_enabled else 'خاموش' }}</span>
-                <span class="badge badge-warning text-neutral gap-1">پیشی: {{ 'روشن' if acc.pishi_enabled else 'خاموش' }}</span>
+                <span class="badge badge-warning text-neutral gap-1">پیشی: {{ 'روشن' if acc.pishi_enabled else 'خاموش'
+                    }}</span>
                 <span class="badge badge-primary gap-1">ماهی: {{ 'روشن' if acc.fishing_enabled else 'خاموش' }}</span>
                 <span class="badge badge-success gap-1">نجات: {{ 'روشن' if acc.rescue_enabled else 'خاموش' }}</span>
             </div>
@@ -220,18 +277,22 @@
 
             <!-- Actions -->
             <div class="card-actions justify-end mt-4">
-                <a href="{{ url_for('account_settings', uid=acc.uid) }}" class="btn btn-outline btn-primary btn-sm">تنظیمات</a>
+                <a href="{{ url_for('account_settings', uid=acc.uid) }}"
+                    class="btn btn-outline btn-primary btn-sm">تنظیمات</a>
                 <a href="{{ url_for('account_logs', uid=acc.uid) }}" class="btn btn-outline btn-ghost btn-sm">لاگ‌ها</a>
 
                 <form action="{{ url_for('toggle_account', uid=acc.uid) }}" method="POST">
-                    <button type="submit" class="btn btn-sm {% if acc.is_active %}btn-outline btn-error{% else %}btn-outline btn-success{% endif %}">
+                    <button type="submit"
+                        class="btn btn-sm {% if acc.is_active %}btn-outline btn-error{% else %}btn-outline btn-success{% endif %}">
                         {{ 'توقف' if acc.is_active else 'شروع' }}
                     </button>
                 </form>
 
-                <form action="{{ url_for('delete_account', uid=acc.uid) }}" method="POST" onsubmit="return confirm('آیا از حذف این اکانت مطمئن هستید؟');">
-                    <button type="submit" class="btn btn-outline btn-error btn-sm">حذف</button>
-                </form>
+                <button type="button" class="btn btn-outline btn-error btn-sm delete-btn"
+                    data-action="{{ url_for('delete_account', uid=acc.uid) }}"
+                    data-name="{{ acc.account_name or acc.uid }}">
+                    حذف
+                </button>
             </div>
         </div>
     </div>
@@ -242,6 +303,55 @@
     <span>هنوز اکانتی اضافه نکرده‌اید. روی "افزودن اکانت جدید" کلیک کنید.</span>
 </div>
 {% endif %}
+
+<!-- Transfer Confirmation Modal -->
+<dialog id="transfer-modal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg">💸 انتقال موجودی</h3>
+        <p class="py-4">آیا مطمئن هستید که می‌خواهید تمام موجودی همه اکانت‌ها را به کاربر <span
+                id="transfer-modal-target" class="font-bold"></span> منتقل کنید؟</p>
+        <div class="modal-action">
+            <button class="btn btn-ghost" onclick="hideTransferModal()">انصراف</button>
+            <button class="btn btn-warning" onclick="confirmTransfer()">انتقال</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<!-- Delete Confirmation Modal -->
+<dialog id="delete-modal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg">🗑️ حذف اکانت</h3>
+        <p class="py-4">آیا از حذف اکانت <span id="delete-modal-name" class="font-bold"></span> مطمئن هستید؟ این عمل
+            غیرقابل بازگشت است.</p>
+        <div class="modal-action">
+            <button class="btn btn-ghost" onclick="hideDeleteModal()">انصراف</button>
+            <form id="delete-modal-form" method="POST">
+                <button type="submit" class="btn btn-error">حذف</button>
+            </form>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<!-- Bulk Stop Confirmation Modal -->
+<dialog id="bulk-stop-modal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg">⏹️ توقف اکانت‌ها</h3>
+        <p class="py-4">آیا مطمئن هستید که می‌خواهید اکانت‌های انتخاب‌شده را متوقف کنید؟</p>
+        <div class="modal-action">
+            <button class="btn btn-ghost" onclick="hideBulkStopModal()">انصراف</button>
+            <button class="btn btn-error" onclick="confirmBulkStop()">توقف</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
 
 <script>
     // Reveal masked phone
@@ -271,6 +381,44 @@
             }
         });
     });
+
+    // Live countdown timers
+    function updateCountdownTimers() {
+        const now = Math.floor(Date.now() / 1000);
+
+        document.querySelectorAll(".countdown-timer").forEach(function (el) {
+            const timestamp = parseInt(el.dataset.timestamp || "0");
+
+            if (timestamp <= 0) {
+                el.textContent = "آماده";
+                el.classList.add("text-success");
+                return;
+            }
+
+            const diff = timestamp - now;
+
+            if (diff <= 0) {
+                el.textContent = "آماده";
+                el.classList.add("text-success");
+                return;
+            }
+
+            el.classList.remove("text-success");
+
+            const hours = Math.floor(diff / 3600);
+            const minutes = Math.floor((diff % 3600) / 60);
+            const seconds = diff % 60;
+
+            if (hours > 0) {
+                el.textContent = `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+            } else {
+                el.textContent = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+            }
+        });
+    }
+
+    updateCountdownTimers();
+    setInterval(updateCountdownTimers, 1000);
 
     // Search/filter/sort
     const searchInput = document.getElementById("account-search");
@@ -338,7 +486,102 @@
         applyDashboardSort();
     }
 
-    // Bulk actions
+    const transferBtn = document.getElementById("transfer-btn");
+
+    if (transferBtn) {
+        transferBtn.addEventListener("click", function () {
+            showTransferModal();
+        });
+    }
+
+    // Transfer modal
+    function showTransferModal() {
+        const target = document.getElementById("transfer-target").value.trim();
+
+        if (!target) {
+            alert("لطفا آیدی کاربر را وارد کنید");
+            return;
+        }
+
+        document.getElementById("transfer-modal-target").textContent = target;
+        document.getElementById("transfer-modal").showModal();
+    }
+
+    function hideTransferModal() {
+        document.getElementById("transfer-modal").close();
+    }
+
+    function confirmTransfer() {
+        const target = document.getElementById("transfer-target").value.trim();
+
+        const form = document.createElement("form");
+        form.method = "POST";
+        form.action = "{{ url_for('transfer') }}";
+
+        const input = document.createElement("input");
+        input.type = "hidden";
+        input.name = "target_user_id";
+        input.value = target;
+        form.appendChild(input);
+
+        document.body.appendChild(form);
+        form.submit();
+    }
+
+    // Delete modal — using data attributes to avoid quote issues
+    document.querySelectorAll(".delete-btn").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+            showDeleteModal(btn.dataset.action, btn.dataset.name);
+        });
+    });
+
+    function showDeleteModal(actionUrl, accountName) {
+        document.getElementById("delete-modal-name").textContent = accountName;
+        document.getElementById("delete-modal-form").action = actionUrl;
+        document.getElementById("delete-modal").showModal();
+    }
+
+    function hideDeleteModal() {
+        document.getElementById("delete-modal").close();
+    }
+
+    const bulkStop = document.getElementById("bulk-stop");
+
+    if (bulkStop) {
+        bulkStop.addEventListener("click", function () {
+            showBulkStopModal();
+        });
+    }
+
+    // Bulk stop modal
+    function showBulkStopModal() {
+        const selected = Array.from(document.querySelectorAll(".bulk-check:checked"));
+
+        if (selected.length === 0) {
+            alert("هیچ اکانتی انتخاب نشده است");
+            return;
+        }
+
+        document.getElementById("bulk-stop-modal").showModal();
+    }
+
+    function hideBulkStopModal() {
+        document.getElementById("bulk-stop-modal").close();
+    }
+
+    function confirmBulkStop() {
+        submitBulk("{{ url_for('bulk_stop') }}");
+    }
+
+    // Bulk start (no confirmation needed)
+    const bulkStart = document.getElementById("bulk-start");
+
+    if (bulkStart) {
+        bulkStart.addEventListener("click", function () {
+            submitBulk("{{ url_for('bulk_start') }}");
+        });
+    }
+
     function submitBulk(actionUrl) {
         const selected = Array.from(document.querySelectorAll(".bulk-check:checked")).map(function (checkbox) {
             return checkbox.value;
@@ -365,19 +608,50 @@
         form.submit();
     }
 
-    const bulkStart = document.getElementById("bulk-start");
-    const bulkStop = document.getElementById("bulk-stop");
+    // Poll active jobs
+    function pollActiveJobs() {
+        fetch("{{ url_for('active_jobs') }}")
+            .then(function (response) { return response.json(); })
+            .then(function (jobs) {
+                const container = document.getElementById("active-jobs-container");
 
-    if (bulkStart) {
-        bulkStart.addEventListener("click", function () {
-            submitBulk("{{ url_for('bulk_start') }}");
-        });
+                if (!container) return;
+
+                if (jobs.length === 0) {
+                    const jobSection = container.closest(".card");
+                    if (jobSection) {
+                        jobSection.style.display = "none";
+                    }
+                    return;
+                }
+
+                container.innerHTML = "";
+
+                jobs.forEach(function (job) {
+                    const div = document.createElement("div");
+                    div.className = "flex items-center gap-3";
+                    div.dataset.jobId = job.id;
+
+                    let label = job.type;
+                    if (job.type === "update_status") label = "🔄 آپدیت وضعیت";
+                    else if (job.type === "update_profiles") label = "🍬 بروزرسانی پروفایل";
+                    else if (job.type === "transfer") label = "💸 انتقال موجودی";
+
+                    div.innerHTML = `
+                        <span class="text-sm">${label}</span>
+                        <progress class="progress progress-primary w-40" value="${job.processed_accounts}" max="${job.total_accounts}"></progress>
+                        <span class="text-xs opacity-60">${job.processed_accounts}/${job.total_accounts}</span>
+                    `;
+
+                    container.appendChild(div);
+                });
+            })
+            .catch(function (e) {
+                console.error("Failed to poll jobs:", e);
+            });
     }
 
-    if (bulkStop) {
-        bulkStop.addEventListener("click", function () {
-            submitBulk("{{ url_for('bulk_stop') }}");
-        });
-    }
+    // Poll every 5 seconds
+    setInterval(pollActiveJobs, 5000);
 </script>
 {% endblock %}

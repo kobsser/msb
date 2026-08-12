@@ -82,6 +82,13 @@ DEFAULT_SETTINGS = {
 
     # Maintenance
     "MAINTENANCE_MODE": "0",
+
+    # Command templates
+    "MEOW_COMMAND": "میو",
+    "PISHI_COMMAND": "پیشی",
+    "FISHING_COMMAND": "ماهی",
+    "PROFILE_COMMAND": "میوهام",
+    "TRANSFER_COMMAND_TEMPLATE": "انتقال میویی {amount} {target}",
 }
 
 
@@ -214,6 +221,21 @@ def init_db():
                 fishing_status_check_at BIGINT DEFAULT 0,
                 fishing_periodic_check_at BIGINT DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS jobs (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                type TEXT NOT NULL,
+                status TEXT DEFAULT 'running',
+                total_accounts INTEGER DEFAULT 0,
+                processed_accounts INTEGER DEFAULT 0,
+                success_count INTEGER DEFAULT 0,
+                failed_count INTEGER DEFAULT 0,
+                started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                finished_at TIMESTAMP
             )
         """)
 
@@ -1531,3 +1553,140 @@ def reset_fishing_checks(phone):
             """,
             (str(phone),)
         )
+
+
+# ============================================================
+# Command templates
+# ============================================================
+
+def get_command_template(key, default):
+    try:
+        value = get_setting(key, default)
+        return value if value else default
+    except:
+        return default
+
+
+# ============================================================
+# Jobs system
+# ============================================================
+
+def create_job(user_id, job_type, total_accounts):
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            INSERT INTO jobs (user_id, type, total_accounts)
+            VALUES (%s, %s, %s)
+            RETURNING id
+            """,
+            (user_id, str(job_type), int(total_accounts))
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+
+
+def update_job_progress(job_id, processed=None, success=None, failed=None):
+    if not job_id:
+        return
+
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            UPDATE jobs
+            SET
+                processed_accounts = COALESCE(%s, processed_accounts),
+                success_count = COALESCE(%s, success_count),
+                failed_count = COALESCE(%s, failed_count)
+            WHERE id = %s
+            """,
+            (
+                processed if processed is not None else None,
+                success if success is not None else None,
+                failed if failed is not None else None,
+                job_id
+            )
+        )
+
+
+def increment_job_processed(job_id, success=True):
+    if not job_id:
+        return
+
+    with get_db_cursor(commit=True) as cur:
+        if success:
+            cur.execute(
+                """
+                UPDATE jobs
+                SET
+                    processed_accounts = processed_accounts + 1,
+                    success_count = success_count + 1
+                WHERE id = %s
+                """,
+                (job_id,)
+            )
+        else:
+            cur.execute(
+                """
+                UPDATE jobs
+                SET
+                    processed_accounts = processed_accounts + 1,
+                    failed_count = failed_count + 1
+                WHERE id = %s
+                """,
+                (job_id,)
+            )
+
+
+def finish_job(job_id, status='completed'):
+    if not job_id:
+        return
+
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            UPDATE jobs
+            SET status = %s, finished_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+            """,
+            (str(status), job_id)
+        )
+
+
+def get_active_jobs_for_user(user_id):
+    with get_db_cursor(dict_cursor=True) as cur:
+        cur.execute(
+            """
+            SELECT *
+            FROM jobs
+            WHERE user_id = %s
+              AND status = 'running'
+            ORDER BY id DESC
+            """,
+            (user_id,)
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
+def get_recent_jobs_for_user(user_id, limit=10):
+    with get_db_cursor(dict_cursor=True) as cur:
+        cur.execute(
+            """
+            SELECT *
+            FROM jobs
+            WHERE user_id = %s
+            ORDER BY id DESC
+            LIMIT %s
+            """,
+            (user_id, int(limit))
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
+def get_job_by_id(job_id):
+    with get_db_cursor(dict_cursor=True) as cur:
+        cur.execute(
+            "SELECT * FROM jobs WHERE id = %s",
+            (job_id,)
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None

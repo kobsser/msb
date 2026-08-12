@@ -22,12 +22,9 @@
                     📄 لاگ‌ها
                 </a>
 
-                <form action="{{ url_for('reset_timers', uid=acc.uid) }}" method="POST" class="inline"
-                    onsubmit="return confirm('Reset all timers?');">
-                    <button type="submit" class="btn btn-outline btn-warning btn-sm">
-                        ⏱ ریست تایمرها
-                    </button>
-                </form>
+                <button type="button" class="btn btn-outline btn-warning btn-sm" id="reset-timers-btn">
+                    ⏱ ریست تایمرها
+                </button>
 
                 <form action="{{ url_for('refresh_groups', uid=acc.uid) }}" method="POST" class="inline">
                     <button type="submit" class="btn btn-outline btn-secondary btn-sm">
@@ -66,6 +63,55 @@
                     <span class="label-text font-bold text-lg">فعالسازی نجات (Rescue)</span>
                 </label>
             </div>
+
+            <div class="divider"></div>
+
+            <!-- Pishi Info Display -->
+            {% if acc.pishi_level_max > 0 or acc.pishi_mps > 0 or acc.pishi_capacity > 0 %}
+            <div class="mb-6 p-4 bg-base-200 rounded-lg">
+                <h3 class="text-lg font-bold mb-3">🐱 اطلاعات پیشی</h3>
+                <div class="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+                    {% if acc.pishi_rank_number > 0 %}
+                    <div class="flex flex-col">
+                        <span class="opacity-60 text-xs">مقام</span>
+                        <span class="font-bold">{{ acc.pishi_rank_number }}</span>
+                    </div>
+                    {% endif %}
+
+                    {% if acc.pishi_level_max > 0 %}
+                    <div class="flex flex-col">
+                        <span class="opacity-60 text-xs">سطح</span>
+                        {% if acc.pishi_level_current >= acc.pishi_level_max %}
+                        <span class="font-bold text-success">{{ acc.pishi_level_current }}/{{ acc.pishi_level_max }} ✅</span>
+                        {% else %}
+                        <span class="font-bold text-warning">{{ acc.pishi_level_current }}/{{ acc.pishi_level_max }}</span>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+
+                    {% if acc.pishi_mps > 0 %}
+                    <div class="flex flex-col">
+                        <span class="opacity-60 text-xs">تولید در ثانیه</span>
+                        <span class="font-bold">{{ acc.pishi_mps }} 🪙/s</span>
+                    </div>
+                    {% endif %}
+
+                    {% if acc.pishi_capacity > 0 %}
+                    <div class="flex flex-col">
+                        <span class="opacity-60 text-xs">ظرفیت</span>
+                        <span class="font-bold">{{ "{:,}".format(acc.pishi_capacity) }}</span>
+                    </div>
+                    {% endif %}
+
+                    {% if acc.pishi_upgrade_cost > 0 %}
+                    <div class="flex flex-col">
+                        <span class="opacity-60 text-xs">هزینه ارتقا</span>
+                        <span class="font-bold">{{ "{:,}".format(acc.pishi_upgrade_cost) }} 🪙</span>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
 
             <div class="divider"></div>
 
@@ -141,7 +187,25 @@
     </div>
 </div>
 
+<!-- Reset Timers Confirmation Modal -->
+<dialog id="reset-modal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg">⏱ ریست تایمرها</h3>
+        <p class="py-4">آیا مطمئن هستید که می‌خواهید تمام تایمرهای این اکانت را ریست کنید؟</p>
+        <div class="modal-action">
+            <button class="btn btn-ghost" id="reset-cancel-btn">انصراف</button>
+            <form id="reset-modal-form" method="POST">
+                <button type="submit" class="btn btn-warning">ریست</button>
+            </form>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
 <script>
+    // Reveal masked phone
     const revealBtn = document.querySelector(".reveal-phone");
 
     if (revealBtn) {
@@ -168,6 +232,25 @@
             } catch (e) {
                 console.error(e);
             }
+        });
+    }
+
+    // Reset timers modal
+    const resetBtn = document.getElementById("reset-timers-btn");
+    const resetModal = document.getElementById("reset-modal");
+    const resetCancelBtn = document.getElementById("reset-cancel-btn");
+    const resetForm = document.getElementById("reset-modal-form");
+
+    if (resetBtn && resetModal) {
+        resetBtn.addEventListener("click", function () {
+            resetForm.action = "{{ url_for('reset_timers', uid=acc.uid) }}";
+            resetModal.showModal();
+        });
+    }
+
+    if (resetCancelBtn && resetModal) {
+        resetCancelBtn.addEventListener("click", function () {
+            resetModal.close();
         });
     }
 </script>

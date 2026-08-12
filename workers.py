@@ -31,6 +31,11 @@ from database import (
     claim_fishing_periodic_check,
     mask_phone,
     add_account_log,
+    get_command_template,
+    create_job,
+    update_job_progress,
+    increment_job_processed,
+    finish_job,
 )
 
 import session_manager
@@ -96,6 +101,42 @@ TRANSFER_SUCCESS_TOKEN = "موفقیت"
 # Rescue
 RESCUE_CALLBACK_PREFIX = "rescue_cat"
 
+def get_command(feature):
+    """Gets the command for a feature from settings."""
+    defaults = {
+        "meow": "میو",
+        "pishi": "پیشی",
+        "fishing": "ماهی",
+        "profile": "میوهام",
+    }
+
+    keys = {
+        "meow": "MEOW_COMMAND",
+        "pishi": "PISHI_COMMAND",
+        "fishing": "FISHING_COMMAND",
+        "profile": "PROFILE_COMMAND",
+    }
+
+    key = keys.get(feature)
+    default = defaults.get(feature, "")
+
+    if not key:
+        return default
+
+    return get_command_template(key, default)
+
+
+def get_transfer_command(amount, target):
+    """Gets the transfer command from template."""
+    template = get_command_template(
+        "TRANSFER_COMMAND_TEMPLATE",
+        "انتقال میویی {amount} {target}"
+    )
+
+    try:
+        return template.format(amount=amount, target=target)
+    except:
+        return f"انتقال میویی {amount} {target}"
 
 # ============================================================
 # Loop helpers
@@ -1059,7 +1100,7 @@ async def send_fishing_probe(client, phone: str, chat_ids, reason: str):
 
     for chat_id in chat_ids:
         try:
-            sent_message = await client.send_message(chat_id, "ماهی")
+            sent_message = await client.send_message(chat_id, get_command("fishing"))
 
             if phone not in TRACKED_FISHING_MESSAGES:
                 TRACKED_FISHING_MESSAGES[phone] = {}
@@ -1405,7 +1446,7 @@ async def smart_scheduler_loop(client, phone: str):
 
                         for chat_id in chat_ids:
                             try:
-                                sent_message = await client.send_message(chat_id, "میو")
+                                sent_message = await client.send_message(chat_id, get_command("meow"))
 
                                 if phone not in MEOW_TRACKED_MESSAGES:
                                     MEOW_TRACKED_MESSAGES[phone] = {}
@@ -1450,7 +1491,7 @@ async def smart_scheduler_loop(client, phone: str):
 
                     for chat_id in chat_ids:
                         try:
-                            await client.send_message(chat_id, "پیشی")
+                            await client.send_message(chat_id, get_command("pishi"))
                             print(f"🐱 [{mask_phone(phone)}] Pishi sent to {chat_id}")
 
                         except FloodWait as e:
@@ -1506,7 +1547,7 @@ async def smart_scheduler_loop(client, phone: str):
 
                         for chat_id in chat_ids:
                             try:
-                                sent_message = await client.send_message(chat_id, "ماهی")
+                                sent_message = await client.send_message(chat_id, get_command("fishing"))
 
                                 if phone not in TRACKED_FISHING_MESSAGES:
                                     TRACKED_FISHING_MESSAGES[phone] = {}
@@ -1686,7 +1727,8 @@ async def _job_fetch_profile(client, phone, backup_group_id):
         print(f"⚠️ [{mask_phone(phone)}] Not in backup group, profile skipped")
         return None
 
-    sent = await client.send_message(chat_id, "میوهام")
+    profile_command = get_command("profile")
+    sent = await client.send_message(chat_id, profile_command)
     _track_backup_message(phone, chat_id, sent.id)
 
     timeout = setting_int("PROFILE_FETCH_TIMEOUT", 20)
@@ -1718,7 +1760,7 @@ async def _job_transfer(client, phone, backup_group_id, target_user_id):
 
     await asyncio.sleep(random.uniform(1.0, 3.0))
 
-    command = f"انتقال میویی {balance} {target_user_id}"
+    command = get_transfer_command(balance, target_user_id)
     sent = await client.send_message(chat_id, command)
     _track_backup_message(phone, chat_id, sent.id)
 
@@ -1827,13 +1869,15 @@ async def _job_transfer(client, phone, backup_group_id, target_user_id):
 # Orchestrators (concurrent)
 # ============================================================
 
-async def update_status_for_user(user_id):
+async def update_status_for_user(user_id, job_id=None):
     user = get_web_user_by_id(user_id)
     backup_group_id = (user or {}).get("backup_group_id") or ""
 
     accounts = get_tg_accounts_for_user(user_id)
 
     if not accounts:
+        if job_id:
+            finish_job(job_id, 'completed')
         return
 
     concurrency = _get_user_job_concurrency("status")
@@ -1866,25 +1910,38 @@ async def update_status_for_user(user_id):
                     f"name={result.get('name')} in_backup={result.get('in_backup')}"
                 )
 
+                if job_id:
+                    increment_job_processed(job_id, success=True)
+
             except Exception as e:
                 print(f"❌ update_status error [{mask_phone(phone)}]: {e}")
+
+                if job_id:
+                    increment_job_processed(job_id, success=False)
 
         jobs.append(job)
 
     await _run_concurrent_account_jobs(jobs, concurrency)
 
+    if job_id:
+        finish_job(job_id, 'completed')
 
-async def update_profiles_for_user(user_id):
+
+async def update_profiles_for_user(user_id, job_id=None):
     user = get_web_user_by_id(user_id)
     backup_group_id = (user or {}).get("backup_group_id") or ""
 
     if not backup_group_id:
         print("⚠️ update_profiles: no backup group set")
+        if job_id:
+            finish_job(job_id, 'failed')
         return
 
     accounts = get_tg_accounts_for_user(user_id)
 
     if not accounts:
+        if job_id:
+            finish_job(job_id, 'completed')
         return
 
     concurrency = _get_user_job_concurrency("profile")
@@ -1906,17 +1963,28 @@ async def update_profiles_for_user(user_id):
                     lambda client: _job_fetch_profile(client, phone, backup_group_id)
                 )
 
+                if job_id:
+                    increment_job_processed(job_id, success=True)
+
             except Exception as e:
                 print(f"❌ update_profiles error [{mask_phone(phone)}]: {e}")
+
+                if job_id:
+                    increment_job_processed(job_id, success=False)
 
         jobs.append(job)
 
     await _run_concurrent_account_jobs(jobs, concurrency)
 
+    if job_id:
+        finish_job(job_id, 'completed')
 
-async def transfer_for_user(user_id, target_user_id):
+
+async def transfer_for_user(user_id, target_user_id, job_id=None):
     if not global_feature_enabled("transfer"):
         print("⚠️ transfer: global transfer disabled")
+        if job_id:
+            finish_job(job_id, 'failed')
         return
 
     user = get_web_user_by_id(user_id)
@@ -1924,11 +1992,15 @@ async def transfer_for_user(user_id, target_user_id):
 
     if not backup_group_id:
         print("⚠️ transfer: no backup group set")
+        if job_id:
+            finish_job(job_id, 'failed')
         return
 
     accounts = get_tg_accounts_for_user(user_id)
 
     if not accounts:
+        if job_id:
+            finish_job(job_id, 'completed')
         return
 
     concurrency = _get_user_job_concurrency("transfer")
@@ -1955,13 +2027,21 @@ async def transfer_for_user(user_id, target_user_id):
                     )
                 )
 
+                if job_id:
+                    increment_job_processed(job_id, success=True)
+
             except Exception as e:
                 print(f"❌ transfer error [{mask_phone(phone)}]: {e}")
+
+                if job_id:
+                    increment_job_processed(job_id, success=False)
 
         jobs.append(job)
 
     await _run_concurrent_account_jobs(jobs, concurrency)
 
+    if job_id:
+        finish_job(job_id, 'completed')
 
 # ============================================================
 # Worker management
