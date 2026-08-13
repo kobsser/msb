@@ -140,6 +140,8 @@ app.secret_key = SECRET_KEY
 
 init_db()
 
+app.jinja
+
 
 # ============================================================
 # Maintenance mode
