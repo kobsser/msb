@@ -1,0 +1,689 @@
+{% extends "base.html" %}
+{% block title %}Heist Panel{% endblock %}
+{% block content %}
+
+{% set state_is_active = state.get("state", "idle") in ["trigger_sent", "loc_selected", "level_shown", "level_selected", "waiting_joins", "all_joined", "confirmed", "phase_open", "phase_steal", "phase_move", "phase_run", "listening"] %}
+
+<div x-data="heistPanel()" x-init="init()">
+
+    <!-- Header -->
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+        <div>
+            <h2 class="text-2xl font-bold tracking-tight flex items-center gap-2">
+                <i data-lucide="swords" class="w-6 h-6 text-primary"></i>
+                سرقت میویی
+            </h2>
+            <p class="text-sm opacity-50 mt-1">Mini-game heist automation</p>
+        </div>
+
+        <div class="flex items-center gap-3">
+            <!-- Auto toggle -->
+            <form method="POST" action="{{ url_for('heist_save_config') }}" class="flex items-center gap-2">
+                <input type="hidden" name="chat_id" value="{{ config.get('chat_id', 0) }}">
+                <input type="hidden" name="use_backup_group" {{ 'checked' if config.get('use_backup_group') else '' }}>
+                <input type="hidden" name="selected_level" value="{{ config.get('selected_level', 1) }}">
+                <input type="hidden" name="auto_level_mode" value="{{ config.get('auto_level_mode', 'best_available') }}">
+                <input type="hidden" name="steal_count" value="{{ config.get('steal_count', 0) }}">
+                <input type="hidden" name="move_count" value="{{ config.get('move_count', 0) }}">
+                <input type="hidden" name="listen_timeout" value="{{ config.get('listen_timeout', 600) }}">
+                <input type="hidden" name="heartbeat_enabled" {{ 'checked' if config.get('heartbeat_enabled', True) else '' }}>
+                <input type="hidden" name="auto_delay_min" value="{{ config.get('auto_delay_min', 5) }}">
+                <input type="hidden" name="auto_delay_max" value="{{ config.get('auto_delay_max', 15) }}">
+                <label class="cursor-pointer flex items-center gap-2">
+                    <span class="text-sm font-medium">Auto</span>
+                    <input type="checkbox" name="auto_enabled" class="toggle toggle-primary toggle-sm"
+                        {{ 'checked' if config.get('auto_enabled') else '' }}
+                        onchange="this.form.submit()">
+                </label>
+            </form>
+        </div>
+    </div>
+
+    <!-- Status Card -->
+    <div class="glass-card rounded-2xl p-4 mb-4">
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
+            <div class="flex items-center gap-3">
+                <div class="w-3 h-3 rounded-full"
+                    :class="{
+                        'bg-success animate-pulse': isActive(),
+                        'bg-error': state === 'error' || state === 'lost' || state === 'timeout',
+                        'bg-warning': state === 'aborted',
+                        'bg-base-content/20': !isActive() && !['error','lost','timeout','aborted'].includes(state)
+                    }"></div>
+                <div>
+                    <span class="font-bold text-sm" x-text="getStateLabel()"></span>
+                    <span class="text-xs opacity-50 mr-2" x-show="level > 0" x-text="'Level ' + level"></span>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-4 text-xs opacity-60">
+                <span x-show="state === 'phase_steal'"
+                    x-text="'🏋️ Steal: ' + stealClicksDone + '/' + (stealClicksTarget || '∞')"></span>
+                <span x-show="state === 'phase_move'"
+                    x-text="'⏰ Move: ' + moveClicksDone + '/' + (moveClicksTarget || '∞')"></span>
+            </div>
+
+            <div x-show="error" class="text-xs text-error font-mono" x-text="error"></div>
+        </div>
+
+        <!-- Progress Steps -->
+        <div class="mt-4 flex items-center gap-1 overflow-x-auto pb-2">
+            <template x-for="(step, idx) in steps" :key="idx">
+                <div class="flex items-center gap-1">
+                    <div class="flex flex-col items-center gap-1 min-w-[52px]">
+                        <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs transition-all duration-300"
+                            :class="{
+                                'bg-success text-success-content': stepStatus(idx) === 'done',
+                                'bg-primary text-primary-content animate-pulse': stepStatus(idx) === 'active',
+                                'bg-error text-error-content': stepStatus(idx) === 'error',
+                                'bg-base-200 opacity-40': stepStatus(idx) === 'pending'
+                            }">
+                            <template x-if="stepStatus(idx) === 'done'">
+                                <i data-lucide="check" class="w-3.5 h-3.5"></i>
+                            </template>
+                            <template x-if="stepStatus(idx) === 'active'">
+                                <span class="loading loading-spinner loading-xs"></span>
+                            </template>
+                            <template x-if="stepStatus(idx) === 'error'">
+                                <i data-lucide="x" class="w-3.5 h-3.5"></i>
+                            </template>
+                            <template x-if="stepStatus(idx) === 'pending'">
+                                <span x-text="idx + 1"></span>
+                            </template>
+                        </div>
+                        <span class="text-[9px] opacity-50 whitespace-nowrap" x-text="step"></span>
+                    </div>
+                    <div class="w-3 h-px bg-base-content/10" x-show="idx < steps.length - 1"></div>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- Cooldowns -->
+    <div class="glass-card rounded-2xl p-4 mb-4">
+        <div class="flex items-center justify-between mb-3">
+            <h3 class="font-bold text-sm flex items-center gap-2">
+                <i data-lucide="timer" class="w-4 h-4 text-warning"></i>
+                Cooldowns
+            </h3>
+            <form method="POST" action="{{ url_for('heist_check_cooldowns') }}">
+                <button type="submit" class="btn btn-ghost btn-xs gap-1">
+                    <i data-lucide="refresh-cw" class="w-3 h-3"></i>
+                    Check
+                </button>
+            </form>
+        </div>
+
+        <div class="grid grid-cols-3 gap-3">
+            {% for lvl in [1, 2, 3] %}
+            <div class="metric-box">
+                <div class="text-xs opacity-50 mb-1">Level {{ lvl }}</div>
+                {% set cd_until = cooldowns.get(lvl, 0) %}
+                {% if cd_until > now %}
+                <div class="text-sm font-bold text-warning cooldown-display" data-until="{{ cd_until }}">
+                    {{ '%d:%02d:%02d' | format((cd_until - now) // 3600, ((cd_until - now) % 3600) // 60, (cd_until - now) % 60) }}
+                </div>
+                {% else %}
+                <div class="text-sm font-bold text-success">آماده</div>
+                {% endif %}
+                <div class="text-[10px] opacity-40 mt-1">
+                    {% if lvl == 1 %}2h{% elif lvl == 2 %}5h{% else %}8h{% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+        <!-- Configuration -->
+        <div class="glass-card rounded-2xl p-5">
+            <h3 class="font-bold text-sm mb-4 flex items-center gap-2">
+                <i data-lucide="settings" class="w-4 h-4 text-primary"></i>
+                Configuration
+            </h3>
+
+            <form method="POST" action="{{ url_for('heist_save_config') }}" class="space-y-3">
+                <!-- Group selection -->
+                <div class="form-control">
+                    <label class="label pb-1">
+                        <span class="label-text text-xs font-medium opacity-60">Group Chat</span>
+                    </label>
+
+                    <label class="cursor-pointer flex items-center gap-2 mb-2">
+                        <input type="checkbox" name="use_backup_group" class="checkbox checkbox-xs checkbox-primary"
+                            {{ 'checked' if config.get('use_backup_group') else '' }}
+                            x-ref="useBackupGroup"
+                            @change="$refs.groupSelect.disabled = $event.target.checked">
+                        <span class="text-xs">Use backup group</span>
+                    </label>
+
+                    <select name="chat_id" class="select select-bordered select-sm w-full bg-base-200/50"
+                        x-ref="groupSelect"
+                        {{ 'disabled' if config.get('use_backup_group') else '' }}>
+                        <option value="0">Select a group...</option>
+                        {% for group in common_groups %}
+                        <option value="{{ group.id }}"
+                            {{ 'selected' if config.get('chat_id') == group.id|int else '' }}>
+                            {{ group.title }} ({{ group.members or 0 }})
+                        </option>
+                        {% endfor %}
+                    </select>
+
+                    {% if config.get('use_backup_group') and backup_group_id %}
+                    <p class="text-[10px] opacity-40 mt-1">Using backup group: {{ backup_group_id }}</p>
+                    {% endif %}
+
+                    {% if not config.get('use_backup_group') and common_groups|length == 0 %}
+                    <p class="text-[10px] text-warning mt-1">
+                        No common groups found. Configure 4 accounts first.
+                    </p>
+                    {% endif %}
+                </div>
+
+                <!-- Level -->
+                <div class="form-control">
+                    <label class="label pb-1">
+                        <span class="label-text text-xs font-medium opacity-60">Level</span>
+                    </label>
+                    <select name="selected_level" class="select select-bordered select-sm w-full bg-base-200/50">
+                        <option value="1" {{ 'selected' if config.get('selected_level', 1) == 1 else '' }}>Level 1 (2h cooldown)</option>
+                        <option value="2" {{ 'selected' if config.get('selected_level', 1) == 2 else '' }}>Level 2 (5h cooldown)</option>
+                        <option value="3" {{ 'selected' if config.get('selected_level', 1) == 3 else '' }}>Level 3 (8h cooldown)</option>
+                    </select>
+                </div>
+
+                <!-- Auto level mode -->
+                <div class="form-control">
+                    <label class="label pb-1">
+                        <span class="label-text text-xs font-medium opacity-60">Auto Level Mode</span>
+                    </label>
+                    <select name="auto_level_mode" class="select select-bordered select-sm w-full bg-base-200/50">
+                        <option value="best_available" {{ 'selected' if config.get('auto_level_mode', 'best_available') == 'best_available' else '' }}>
+                            Best available (lowest)
+                        </option>
+                        <option value="fixed" {{ 'selected' if config.get('auto_level_mode') == 'fixed' else '' }}>
+                            Fixed level only
+                        </option>
+                    </select>
+                </div>
+
+                <!-- Steal / Move counts -->
+                <div class="grid grid-cols-2 gap-3">
+                    <div class="form-control">
+                        <label class="label pb-1">
+                            <span class="label-text text-xs font-medium opacity-60">Steal Count</span>
+                        </label>
+                        <input type="number" name="steal_count" min="0" value="{{ config.get('steal_count', 0) }}"
+                            class="input input-bordered input-sm w-full bg-base-200/50" dir="ltr">
+                        <span class="text-[10px] opacity-40 mt-1">0 = unlimited</span>
+                    </div>
+                    <div class="form-control">
+                        <label class="label pb-1">
+                            <span class="label-text text-xs font-medium opacity-60">Move Count</span>
+                        </label>
+                        <input type="number" name="move_count" min="0" value="{{ config.get('move_count', 0) }}"
+                            class="input input-bordered input-sm w-full bg-base-200/50" dir="ltr">
+                        <span class="text-[10px] opacity-40 mt-1">0 = unlimited</span>
+                    </div>
+                </div>
+
+                <!-- Listen timeout -->
+                <div class="form-control">
+                    <label class="label pb-1">
+                        <span class="label-text text-xs font-medium opacity-60">Listen Timeout (seconds)</span>
+                    </label>
+                    <input type="number" name="listen_timeout" min="60" value="{{ config.get('listen_timeout', 600) }}"
+                        class="input input-bordered input-sm w-full bg-base-200/50" dir="ltr">
+                </div>
+
+                <!-- Heartbeat -->
+                <label class="cursor-pointer flex items-center gap-2">
+                    <input type="checkbox" name="heartbeat_enabled" class="toggle toggle-primary toggle-sm"
+                        {{ 'checked' if config.get('heartbeat_enabled', True) else '' }}>
+                    <span class="text-xs">Heartbeat logging</span>
+                </label>
+
+                <!-- Auto delay -->
+                <div class="grid grid-cols-2 gap-3">
+                    <div class="form-control">
+                        <label class="label pb-1">
+                            <span class="label-text text-xs font-medium opacity-60">Auto Delay Min (s)</span>
+                        </label>
+                        <input type="number" name="auto_delay_min" min="0" value="{{ config.get('auto_delay_min', 5) }}"
+                            class="input input-bordered input-sm w-full bg-base-200/50" dir="ltr">
+                    </div>
+                    <div class="form-control">
+                        <label class="label pb-1">
+                            <span class="label-text text-xs font-medium opacity-60">Auto Delay Max (s)</span>
+                        </label>
+                        <input type="number" name="auto_delay_max" min="0" value="{{ config.get('auto_delay_max', 15) }}"
+                            class="input input-bordered input-sm w-full bg-base-200/50" dir="ltr">
+                    </div>
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-sm w-full gap-1">
+                    <i data-lucide="save" class="w-3.5 h-3.5"></i>
+                    Save Settings
+                </button>
+            </form>
+        </div>
+
+        <!-- Account Assignments -->
+        <div class="glass-card rounded-2xl p-5">
+            <h3 class="font-bold text-sm mb-4 flex items-center gap-2">
+                <i data-lucide="users" class="w-4 h-4 text-primary"></i>
+                Accounts (4 required)
+            </h3>
+
+            {% if all_accounts|length < 4 %}
+            <div class="alert alert-warning mb-4 py-2">
+                <i data-lucide="alert-triangle" class="w-4 h-4"></i>
+                <span class="text-xs">You need at least 4 accounts to use heist.</span>
+            </div>
+            {% endif %}
+
+            <form method="POST" action="{{ url_for('heist_save_accounts') }}" class="space-y-3">
+                {% set positions = [
+                    ('⭐', 'Starter', 'Open', 'mrob_act_open'),
+                    ('🏋️', 'Thief', 'Steal', 'mrob_act_steal'),
+                    ('⏰', 'Mover', 'Move', 'mrob_act_move'),
+                    ('🔑', 'Driver', 'Run', 'mrob_act_run')
+                ] %}
+
+                {% for icon, role, action, callback in positions %}
+                <div class="form-control">
+                    <label class="label pb-1">
+                        <span class="label-text text-xs font-medium opacity-60">
+                            {{ icon }} Position {{ loop.index }} — {{ role }} ({{ action }})
+                        </span>
+                    </label>
+                    <select name="account_phones[]" class="select select-bordered select-sm w-full bg-base-200/50">
+                        <option value="">Select account...</option>
+                        {% for acc in all_accounts %}
+                        {% set assigned_phone = '' %}
+                        {% for a in assignments %}
+                            {% if a.position == loop.parent.loop.index %}
+                                {% set assigned_phone = a.phone %}
+                            {% endif %}
+                        {% endfor %}
+                        <option value="{{ acc.phone }}"
+                            {{ 'selected' if acc.phone == assigned_phone else '' }}>
+                            {{ acc.account_name or mask_phone(acc.phone) }} — {{ mask_phone(acc.phone) }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                {% endfor %}
+
+                <button type="submit" class="btn btn-primary btn-sm w-full gap-1">
+                    <i data-lucide="save" class="w-3.5 h-3.5"></i>
+                    Save Accounts
+                </button>
+            </form>
+
+            <!-- Current assignments with jail status -->
+            {% if assignments %}
+            <div class="mt-4 space-y-2">
+                <h4 class="text-xs font-bold opacity-50 uppercase tracking-wider">Current Team</h4>
+                {% for a in assignments %}
+                <div class="flex items-center justify-between p-2 rounded-lg bg-base-200/50">
+                    <div class="flex items-center gap-2">
+                        {% if a.position == 1 %}
+                        <span class="badge badge-primary badge-xs">⭐</span>
+                        {% endif %}
+                        <span class="text-xs font-medium">{{ a.name or a.masked_phone }}</span>
+                        <span class="text-[10px] opacity-40">{{ a.masked_phone }}</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        {% if a.jail_until > now %}
+                        <span class="badge badge-error badge-xs gap-1">
+                            <i data-lucide="lock" class="w-2.5 h-2.5"></i>
+                            Jail
+                        </span>
+                        <form method="POST" action="{{ url_for('heist_check_jail') }}" class="inline">
+                            <input type="hidden" name="phone" value="{{ a.phone }}">
+                            <button type="submit" class="btn btn-ghost btn-xs" data-tippy-content="Check jail">
+                                <i data-lucide="search" class="w-3 h-3"></i>
+                            </button>
+                        </form>
+                        {% else %}
+                        <span class="badge badge-success badge-xs">OK</span>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="glass-card rounded-2xl p-5 mb-4">
+        <h3 class="font-bold text-sm mb-4 flex items-center gap-2">
+            <i data-lucide="zap" class="w-4 h-4 text-primary"></i>
+            Actions
+        </h3>
+
+        <div class="flex flex-wrap gap-2 mb-4">
+            {% if not state_is_active %}
+            <button type="button" class="btn btn-success btn-sm gap-1" @click="$refs.startModal.showModal()">
+                <i data-lucide="play" class="w-3.5 h-3.5"></i>
+                Start Heist
+            </button>
+            {% else %}
+            <form method="POST" action="{{ url_for('heist_abort') }}">
+                <button type="submit" class="btn btn-error btn-sm gap-1">
+                    <i data-lucide="square" class="w-3.5 h-3.5"></i>
+                    Abort
+                </button>
+            </form>
+            {% endif %}
+
+            <form method="POST" action="{{ url_for('heist_check_cooldowns') }}">
+                <button type="submit" class="btn btn-outline btn-sm gap-1">
+                    <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+                    Check Cooldowns
+                </button>
+            </form>
+        </div>
+
+        <!-- Custom per-run settings -->
+        <div x-data="{ useCustom: false }">
+            <label class="cursor-pointer flex items-center gap-2 mb-3">
+                <input type="checkbox" x-model="useCustom" class="checkbox checkbox-xs checkbox-primary">
+                <span class="text-xs">Custom settings for this run</span>
+            </label>
+
+            <div x-show="useCustom" x-collapse class="bg-base-200/50 rounded-xl p-4 mb-3">
+                <div class="grid grid-cols-3 gap-3">
+                    <div class="form-control">
+                        <label class="label pb-1">
+                            <span class="label-text text-xs font-medium opacity-60">Level</span>
+                        </label>
+                        <select id="custom_level" class="select select-bordered select-sm w-full bg-base-200/50">
+                            <option value="1">Level 1</option>
+                            <option value="2">Level 2</option>
+                            <option value="3">Level 3</option>
+                        </select>
+                    </div>
+                    <div class="form-control">
+                        <label class="label pb-1">
+                            <span class="label-text text-xs font-medium opacity-60">Steal</span>
+                        </label>
+                        <input type="number" id="custom_steal" min="0" value="{{ config.get('steal_count', 0) }}"
+                            class="input input-bordered input-sm w-full bg-base-200/50" dir="ltr">
+                    </div>
+                    <div class="form-control">
+                        <label class="label pb-1">
+                            <span class="label-text text-xs font-medium opacity-60">Move</span>
+                        </label>
+                        <input type="number" id="custom_move" min="0" value="{{ config.get('move_count', 0) }}"
+                            class="input input-bordered input-sm w-full bg-base-200/50" dir="ltr">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Start Modal -->
+    <dialog x-ref="startModal" class="modal">
+        <div class="modal-box glass-card border-0">
+            <div class="w-12 h-12 rounded-full bg-success/10 flex items-center justify-center mb-4">
+                <i data-lucide="swords" class="w-6 h-6 text-success"></i>
+            </div>
+            <h3 class="font-bold text-lg mb-1">Start Heist</h3>
+            <p class="text-sm opacity-60 mb-4">
+                {% if assignments|length == 4 %}
+                All 4 accounts are configured. The heist will begin immediately.
+                {% else %}
+                ⚠️ You need exactly 4 accounts configured before starting.
+                {% endif %}
+            </p>
+
+            {% if assignments|length == 4 %}
+            <form method="POST" action="{{ url_for('heist_start') }}">
+                <input type="hidden" name="use_custom" value="" id="start_use_custom">
+                <input type="hidden" name="custom_level" value="" id="start_custom_level">
+                <input type="hidden" name="custom_steal_count" value="" id="start_custom_steal">
+                <input type="hidden" name="custom_move_count" value="" id="start_custom_move">
+
+                <div class="modal-action mt-0">
+                    <button type="button" class="btn btn-ghost btn-sm"
+                        onclick="document.querySelector('dialog').close()">
+                        Cancel
+                    </button>
+                    <button type="submit" class="btn btn-success btn-sm gap-1"
+                        onclick="populateStartForm()">
+                        <i data-lucide="play" class="w-3.5 h-3.5"></i>
+                        Start
+                    </button>
+                </div>
+            </form>
+            {% else %}
+            <div class="modal-action mt-0">
+                <button class="btn btn-ghost btn-sm" onclick="document.querySelector('dialog').close()">Close</button>
+            </div>
+            {% endif %}
+        </div>
+        <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
+
+    <!-- History -->
+    <div class="glass-card rounded-2xl p-5">
+        <h3 class="font-bold text-sm mb-4 flex items-center gap-2">
+            <i data-lucide="history" class="w-4 h-4 text-primary"></i>
+            History
+        </h3>
+
+        {% if logs %}
+        <div class="overflow-x-auto">
+            <table class="table table-sm">
+                <thead>
+                    <tr class="text-xs opacity-50">
+                        <th>#</th>
+                        <th>Level</th>
+                        <th>Result</th>
+                        <th>Duration</th>
+                        <th>Time</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for log in logs %}
+                    <tr class="hover:bg-base-200/50 transition-colors">
+                        <td class="text-xs opacity-50 font-mono">{{ log.id }}</td>
+                        <td>
+                            <span class="badge badge-ghost badge-xs">L{{ log.level }}</span>
+                        </td>
+                        <td>
+                            {% if log.result == 'won' %}
+                            <span class="badge badge-success badge-xs gap-1">
+                                <i data-lucide="trophy" class="w-2.5 h-2.5"></i> Won
+                            </span>
+                            {% elif log.result == 'lost' %}
+                            <span class="badge badge-error badge-xs gap-1">
+                                <i data-lucide="skull" class="w-2.5 h-2.5"></i> Lost
+                            </span>
+                            {% elif log.result == 'timeout' %}
+                            <span class="badge badge-warning badge-xs">Timeout</span>
+                            {% else %}
+                            <span class="badge badge-ghost badge-xs">{{ log.result }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-xs font-mono">
+                            {{ '%d:%02d' | format(log.duration_seconds // 60, log.duration_seconds % 60) }}
+                        </td>
+                        <td class="text-xs opacity-50 whitespace-nowrap">
+                            {{ log.finished_at }}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-center text-sm opacity-40 py-6">No heist history yet.</p>
+        {% endif %}
+    </div>
+
+</div>
+
+<script>
+    function heistPanel() {
+        return {
+            state: '{{ state.get("state", "idle") }}',
+            level: {{ state.get("level", 0) }},
+            stealClicksDone: {{ state.get("steal_clicks_done", 0) }},
+            stealClicksTarget: {{ config.get("steal_count", 0) }},
+            moveClicksDone: {{ state.get("move_clicks_done", 0) }},
+            moveClicksTarget: {{ config.get("move_count", 0) }},
+            error: '{{ state.get("error_message", "") }}',
+            now: {{ now }},
+
+            steps: ['Trigger', 'Location', 'Level', 'Joins', 'Confirm', 'Open', 'Steal', 'Move', 'Run', 'Result'],
+
+            stateOrder: [
+                'idle', 'trigger_sent', 'loc_selected', 'level_shown', 'level_selected',
+                'waiting_joins', 'all_joined', 'confirmed', 'phase_open',
+                'phase_steal', 'phase_move', 'phase_run', 'listening',
+                'won', 'lost', 'timeout', 'cooldown', 'error', 'aborted'
+            ],
+
+            init() {
+                setInterval(() => this.pollState(), 2000);
+                setInterval(() => { this.now = Math.floor(Date.now() / 1000); }, 1000);
+                this.updateCooldownDisplays();
+                setInterval(() => this.updateCooldownDisplays(), 1000);
+            },
+
+            async pollState() {
+                try {
+                    const res = await fetch('{{ url_for("heist_state") }}');
+                    const data = await res.json();
+                    this.state = data.state;
+                    this.level = data.level;
+                    this.stealClicksDone = data.steal_clicks_done;
+                    this.stealClicksTarget = data.steal_clicks_target;
+                    this.moveClicksDone = data.move_clicks_done;
+                    this.moveClicksTarget = data.move_clicks_target;
+                    this.error = data.error;
+                    this.now = data.now;
+                } catch (e) {
+                    console.error('Heist poll error:', e);
+                }
+            },
+
+            getStateLabel() {
+                const labels = {
+                    'idle': '🟢 Ready',
+                    'trigger_sent': '📨 Sending trigger...',
+                    'loc_selected': '📍 Selecting location...',
+                    'level_shown': '🎯 Choosing level...',
+                    'level_selected': '✅ Level selected',
+                    'waiting_joins': '👥 Waiting for joins...',
+                    'all_joined': '👥 All joined',
+                    'confirmed': '✔️ Confirmed',
+                    'phase_open': '🗝 Opening lock...',
+                    'phase_steal': '🏋️ Stealing...',
+                    'phase_move': '⏰ Moving items...',
+                    'phase_run': '🔑 Escaping...',
+                    'listening': '👂 Listening for result...',
+                    'won': '🏆 Won!',
+                    'lost': '💀 Lost!',
+                    'timeout': '⏰ Timeout',
+                    'cooldown': '⏳ Cooldown',
+                    'error': '❌ Error',
+                    'aborted': '🚫 Aborted',
+                };
+                return labels[this.state] || this.state;
+            },
+
+            isActive() {
+                const activeStates = [
+                    'trigger_sent', 'loc_selected', 'level_shown', 'level_selected',
+                    'waiting_joins', 'all_joined', 'confirmed', 'phase_open',
+                    'phase_steal', 'phase_move', 'phase_run', 'listening'
+                ];
+                return activeStates.includes(this.state);
+            },
+
+            getStepIndex() {
+                const idx = this.stateOrder.indexOf(this.state);
+                return idx >= 0 ? idx : 0;
+            },
+
+            stepStatus(stepIdx) {
+                if (this.state === 'error' || this.state === 'aborted') {
+                    const currentIdx = this.getStepIndex();
+                    if (stepIdx < currentIdx) return 'done';
+                    if (stepIdx === currentIdx) return 'error';
+                    return 'pending';
+                }
+
+                if (this.state === 'won' || this.state === 'lost' || this.state === 'timeout' || this.state === 'cooldown') {
+                    return 'done';
+                }
+
+                const currentIdx = this.getStepIndex();
+
+                // Map state index to step index
+                // States 0-4 (idle to level_selected) map to steps 0-2
+                // States 5-6 (waiting_joins, all_joined) map to step 3
+                // State 7 (confirmed) maps to step 4
+                // States 8-12 map to steps 5-9
+                let mappedStep;
+                if (currentIdx <= 1) mappedStep = 0;
+                else if (currentIdx === 2) mappedStep = 1;
+                else if (currentIdx <= 4) mappedStep = 2;
+                else if (currentIdx <= 6) mappedStep = 3;
+                else if (currentIdx === 7) mappedStep = 4;
+                else if (currentIdx === 8) mappedStep = 5;
+                else if (currentIdx === 9) mappedStep = 6;
+                else if (currentIdx === 10) mappedStep = 7;
+                else if (currentIdx === 11) mappedStep = 8;
+                else mappedStep = 9;
+
+                if (stepIdx < mappedStep) return 'done';
+                if (stepIdx === mappedStep) return 'active';
+                return 'pending';
+            },
+
+            updateCooldownDisplays() {
+                document.querySelectorAll('.cooldown-display').forEach(el => {
+                    const until = parseInt(el.dataset.until || '0');
+                    const remaining = until - Math.floor(Date.now() / 1000);
+
+                    if (remaining <= 0) {
+                        el.textContent = 'آماده';
+                        el.className = 'text-sm font-bold text-success cooldown-display';
+                    } else {
+                        const h = Math.floor(remaining / 3600);
+                        const m = Math.floor((remaining % 3600) / 60);
+                        const s = remaining % 60;
+                        el.textContent = h > 0
+                            ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+                            : `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+                    }
+                });
+            }
+        }
+    }
+
+    function populateStartForm() {
+        // Check if custom settings are enabled
+        const customCheckbox = document.querySelector('input[x-model="useCustom"]');
+        const isCustom = customCheckbox && customCheckbox.checked;
+
+        document.getElementById('start_use_custom').value = isCustom ? 'on' : '';
+
+        if (isCustom) {
+            document.getElementById('start_custom_level').value = document.getElementById('custom_level').value;
+            document.getElementById('start_custom_steal').value = document.getElementById('custom_steal').value;
+            document.getElementById('start_custom_move').value = document.getElementById('custom_move').value;
+        }
+    }
+
+    // Pass state_is_active to template
+    var stateIsAcive = {{ 'true' if state.get("state", "idle") in ["trigger_sent", "loc_selected", "level_shown", "level_selected", "waiting_joins", "all_joined", "confirmed", "phase_open", "phase_steal", "phase_move", "phase_run", "listening"] else 'false' }};
+</script>
+
+{% endblock %}

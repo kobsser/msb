@@ -24,6 +24,7 @@ from database import (
     get_setting,
     get_setting_int,
     get_setting_float,
+    get_command_template,
     claim_dynamic_feature,
     claim_interval_feature,
     update_fishing_status_check_at,
@@ -31,9 +32,7 @@ from database import (
     claim_fishing_periodic_check,
     mask_phone,
     add_account_log,
-    get_command_template,
     create_job,
-    update_job_progress,
     increment_job_processed,
     finish_job,
 )
@@ -73,13 +72,14 @@ REPLY_OWNER_CACHE = {}
 BACKUP_GROUP_CACHE = {}
 BACKUP_GROUP_CACHE_TTL = 60
 
+AUTO_HEIST_TASKS = {}
+
 FA_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789")
 
 COOLDOWN_RE = re.compile(
     r"(?:بعد از|باید|تا)\s*(?P<time>\d{1,3}(?:[:：.]\d{1,2}(?:[:：.]\d{1,2})?)?)"
 )
 
-# Profile (میوهام) parsing
 PROFILE_NAME_RE = re.compile(r"کاربر\s*[:：]\s*([^\n]+)")
 PROFILE_BALANCE_RE = re.compile(r"میو\s*پوینت\s*ها\s*[:：]\s*([\d,]+)")
 PROFILE_MEOW_RE = re.compile(r"میو\s*میو\s*ها\s*[:：]\s*([\d,]+)")
@@ -87,56 +87,17 @@ PROFILE_CATS_RE = re.compile(r"پیشی\s*های\s*خیابونی\s*[:：]\s*([\
 PROFILE_RANK_RE = re.compile(r"رتبه\s*\(\s*([\d,]+)\s*\)")
 PROFILE_LEVEL_RE = re.compile(r"سطح\s*[:：]\s*(\d+)\s*\|\s*([\d,]+)\s*/\s*([\d,]+)")
 
-# Pishi info parsing
 PISHI_RANK_RE = re.compile(r"مقام\s*[:：]\s*[^\n]*?\(\s*([\d,]+)\s*\)")
 PISHI_LEVEL_RE = re.compile(r"سطح\s*[:：]\s*([\d,]+)\s*/\s*([\d,]+)")
 PISHI_MPS_RE = re.compile(r"(?:تولید\s*)?میو\s*پوینت\s*در\s*ثانیه\s*[:：]\s*([\d,]+)")
 PISHI_CAPACITY_RE = re.compile(r"ظرفیت\s*[:：]\s*([\d,]+)")
 PISHI_UPGRADE_COST_RE = re.compile(r"هزینه\s*ارتقا(?:\s*سطح)?\s*[:：]\s*([\d,]+)")
 
-# Transfer confirmation
 TRANSFER_CONFIRM_PREFIX = "tr_confirm"
 TRANSFER_SUCCESS_TOKEN = "موفقیت"
 
-# Rescue
 RESCUE_CALLBACK_PREFIX = "rescue_cat"
 
-def get_command(feature):
-    """Gets the command for a feature from settings."""
-    defaults = {
-        "meow": "میو",
-        "pishi": "پیشی",
-        "fishing": "ماهی",
-        "profile": "میوهام",
-    }
-
-    keys = {
-        "meow": "MEOW_COMMAND",
-        "pishi": "PISHI_COMMAND",
-        "fishing": "FISHING_COMMAND",
-        "profile": "PROFILE_COMMAND",
-    }
-
-    key = keys.get(feature)
-    default = defaults.get(feature, "")
-
-    if not key:
-        return default
-
-    return get_command_template(key, default)
-
-
-def get_transfer_command(amount, target):
-    """Gets the transfer command from template."""
-    template = get_command_template(
-        "TRANSFER_COMMAND_TEMPLATE",
-        "انتقال میویی {amount} {target}"
-    )
-
-    try:
-        return template.format(amount=amount, target=target)
-    except:
-        return f"انتقال میویی {amount} {target}"
 
 # ============================================================
 # Loop helpers
@@ -169,7 +130,6 @@ def _schedule_coroutine(coro, loop=None):
 
     try:
         running_loop = asyncio.get_running_loop()
-
         if running_loop == target_loop:
             target_loop.create_task(coro)
             return
@@ -180,7 +140,7 @@ def _schedule_coroutine(coro, loop=None):
 
 
 # ============================================================
-# Safe settings helpers
+# Settings helpers
 # ============================================================
 
 def setting_int(key, default):
@@ -206,7 +166,7 @@ def setting_str(key, default):
 
 
 # ============================================================
-# Global feature toggle helper
+# Global feature toggle
 # ============================================================
 
 def global_feature_enabled(feature: str) -> bool:
@@ -232,11 +192,49 @@ def global_feature_enabled(feature: str) -> bool:
 
 
 # ============================================================
+# Command helpers
+# ============================================================
+
+def get_command(feature):
+    defaults = {
+        "meow": "میو",
+        "pishi": "پیشی",
+        "fishing": "ماهی",
+        "profile": "میوهام",
+    }
+
+    keys = {
+        "meow": "MEOW_COMMAND",
+        "pishi": "PISHI_COMMAND",
+        "fishing": "FISHING_COMMAND",
+        "profile": "PROFILE_COMMAND",
+    }
+
+    key = keys.get(feature)
+    default = defaults.get(feature, "")
+
+    if not key:
+        return default
+
+    return get_command_template(key, default)
+
+
+def get_transfer_command(amount, target):
+    template = get_command_template(
+        "TRANSFER_COMMAND_TEMPLATE",
+        "انتقال میویی {amount} {target}"
+    )
+    try:
+        return template.format(amount=amount, target=target)
+    except:
+        return f"انتقال میویی {amount} {target}"
+
+
+# ============================================================
 # Number / text helpers
 # ============================================================
 
 def _int_clean(value):
-    """Handles both '227,082' and '227082' formats."""
     try:
         return int(str(value).replace(",", "").strip())
     except Exception:
@@ -258,10 +256,8 @@ def normalize_text(text: str) -> str:
 
 def get_two_part_time_mode():
     mode = str(setting_str("TWO_PART_TIME_MODE", "ms")).lower()
-
     if mode not in ("ms", "hm"):
         return "ms"
-
     return mode
 
 
@@ -279,7 +275,6 @@ def parse_cooldown_seconds(text: str):
         for part in re.split(r"[:：.]", match.group("time")):
             if part == "":
                 continue
-
             try:
                 parts.append(int(part))
             except:
@@ -290,7 +285,6 @@ def parse_cooldown_seconds(text: str):
                 hours, minutes, secs = parts
             elif len(parts) == 2:
                 mode = get_two_part_time_mode()
-
                 if mode == "hm":
                     hours, minutes, secs = parts[0], parts[1], 0
                 else:
@@ -371,7 +365,7 @@ def parse_pishi_info(text):
 
 
 # ============================================================
-# Profile parser (میوهام)
+# Profile parser
 # ============================================================
 
 def parse_profile_text(text):
@@ -437,7 +431,6 @@ def schedule_feature(phone: str, feature: str, seconds: int, jitter: int = 10):
             update_account_next_run(phone, fishing_next_run=timestamp)
 
         print(f"⏱ [{mask_phone(phone)}] {feature} scheduled in {delay}s")
-
         return timestamp
 
     except Exception as e:
@@ -455,7 +448,6 @@ def dynamic_action(account, feature: str, now: float):
     if next_run < 0:
         timeout = setting_int("DYNAMIC_WAIT_TIMEOUT_SECONDS", 0)
         timeout = max(0, int(timeout))
-
         waiting_since = -next_run
 
         if timeout > 0 and now - waiting_since > timeout:
@@ -471,13 +463,11 @@ def dynamic_action(account, feature: str, now: float):
 
 def get_selected_chat_ids(user):
     chat_ids = []
-
     for chat_id in user.get("selected_groups", []):
         try:
             chat_ids.append(int(chat_id))
         except:
             continue
-
     return chat_ids
 
 
@@ -502,13 +492,11 @@ def get_rescue_chat_ids(user, backup_chat_id=None):
 def flood_seconds(e):
     for attr in ("value", "x"):
         value = getattr(e, attr, None)
-
         if value:
             try:
                 return int(value)
             except:
                 pass
-
     return 60
 
 
@@ -523,13 +511,7 @@ def handle_floodwait(phone: str, feature: str, e):
     print(f"⏳ FloodWait {feature} [{mask_phone(phone)}]: {wait_seconds}s")
 
     try:
-        add_account_log(
-            phone,
-            feature,
-            "floodwait",
-            "warning",
-            f"FloodWait: {wait_seconds}s"
-        )
+        add_account_log(phone, feature, "floodwait", "warning", f"FloodWait: {wait_seconds}s")
     except Exception:
         pass
 
@@ -538,7 +520,6 @@ def handle_floodwait(phone: str, feature: str, e):
 
 def _remember_clicked(storage, key, limit=5000):
     storage.add(key)
-
     if len(storage) > limit:
         storage.clear()
 
@@ -566,13 +547,9 @@ def schedule_fishing_status_check(phone: str):
     try:
         delay = setting_int("FISHING_STATUS_CHECK_DELAY", 300)
         delay = max(0, int(delay))
-
         timestamp = int(time.time()) + delay
-
         update_fishing_status_check_at(phone, timestamp)
-
         print(f"🎣 [{mask_phone(phone)}] Fishing status check scheduled in {delay}s")
-
     except Exception as e:
         print(f"❌ schedule_fishing_status_check error [{mask_phone(phone)}]: {e}")
 
@@ -590,7 +567,6 @@ def clear_backup_group_cache(owner_id=None):
 
 def _get_backup_chat_id_for_account(account):
     owner_id = account.get("owner_id")
-
     if owner_id is None:
         return None
 
@@ -603,17 +579,11 @@ def _get_backup_chat_id_for_account(account):
     try:
         web_user = get_web_user_by_id(owner_id)
         backup_raw = (web_user or {}).get("backup_group_id") or ""
-
-        if backup_raw:
-            backup_int = int(backup_raw)
-        else:
-            backup_int = None
-
+        backup_int = int(backup_raw) if backup_raw else None
     except Exception:
         backup_int = None
 
     BACKUP_GROUP_CACHE[owner_id] = (backup_int, now)
-
     return backup_int
 
 
@@ -680,12 +650,10 @@ def _find_transfer_confirm_button(message):
     for row_index, row in enumerate(rows):
         if not row:
             continue
-
         for col_index, button in enumerate(row):
             callback_data = optimizations.normalize_callback_data(
                 getattr(button, "callback_data", None)
             )
-
             if callback_data.startswith(TRANSFER_CONFIRM_PREFIX):
                 button._row_index = row_index
                 button._col_index = col_index
@@ -701,13 +669,10 @@ async def _click_button_once(message, button):
         try:
             await message.click(callback_data=callback_data)
             return True
-
         except TypeError:
             callback_data = None
-
         except Exception as e:
             error_text = str(e).lower()
-
             if "doesn't exist" not in error_text:
                 print(f"⚠️ Button click error: {e}")
 
@@ -717,7 +682,6 @@ async def _click_button_once(message, button):
             getattr(button, "_row_index", 0)
         )
         return True
-
     except Exception:
         try:
             await message.click(
@@ -725,7 +689,6 @@ async def _click_button_once(message, button):
                 getattr(button, "_col_index", 0)
             )
             return True
-
         except Exception as e:
             print(f"❌ Button click failed: {e}")
             return False
@@ -739,12 +702,9 @@ def _watch_confirmation_edit(client, chat_id, confirmation_message_id):
         try:
             if getattr(edited_message, "id", None) != confirmation_message_id:
                 return
-
             raw_text = edited_message.text or edited_message.caption or ""
-
             if TRANSFER_SUCCESS_TOKEN in normalize_text(raw_text) and not future.done():
                 future.set_result(edited_message)
-
         except Exception:
             pass
 
@@ -754,7 +714,6 @@ def _watch_confirmation_edit(client, chat_id, confirmation_message_id):
     )
 
     client.add_handler(handler, group=-11)
-
     return future, handler
 
 
@@ -774,12 +733,10 @@ def _find_rescue_button(message):
     for row_index, row in enumerate(rows):
         if not row:
             continue
-
         for col_index, button in enumerate(row):
             callback_data = optimizations.normalize_callback_data(
                 getattr(button, "callback_data", None)
             )
-
             if callback_data.startswith(RESCUE_CALLBACK_PREFIX):
                 button._row_index = row_index
                 button._col_index = col_index
@@ -793,7 +750,6 @@ async def _rescue_click_loop(client, phone, message, msg_key: str):
 
     try:
         max_clicks = max(1, setting_int("RESCUE_MAX_CLICKS", 15))
-
         first_delay = max(0.0, setting_float("RESCUE_FIRST_CLICK_DELAY", 0.1))
         fast_min_delay = max(0.0, setting_float("RESCUE_FAST_CLICK_MIN_DELAY", 0.10))
         fast_max_delay = max(fast_min_delay, setting_float("RESCUE_FAST_CLICK_MAX_DELAY", 0.25))
@@ -804,9 +760,7 @@ async def _rescue_click_loop(client, phone, message, msg_key: str):
         current_message = message
 
         for click_number in range(1, max_clicks + 1):
-            # Check if rescue is still enabled
             account = get_tg_account(phone)
-
             if not account or not account.get("is_active") or not account.get("rescue_enabled"):
                 print(f"🐈 [{msg_key}] Rescue stopped: feature/account disabled")
                 break
@@ -815,7 +769,6 @@ async def _rescue_click_loop(client, phone, message, msg_key: str):
                 print(f"🐈 [{msg_key}] Rescue stopped: global rescue disabled")
                 break
 
-            # Delay schedule
             if click_number == 1:
                 await asyncio.sleep(first_delay)
             elif click_number <= 4:
@@ -823,7 +776,6 @@ async def _rescue_click_loop(client, phone, message, msg_key: str):
             else:
                 await asyncio.sleep(normal_delay)
 
-            # Refresh message
             try:
                 fresh_message = await client.get_messages(chat_id, message_id)
             except Exception:
@@ -875,7 +827,7 @@ async def _rescue_click_loop(client, phone, message, msg_key: str):
 
 
 # ============================================================
-# Button helpers (original)
+# Button helpers
 # ============================================================
 
 async def click_inline_button(message, button, row_index, col_index):
@@ -893,27 +845,22 @@ async def click_inline_button(message, button, row_index, col_index):
             try:
                 await message.click(callback_data=callback_data)
                 return True
-
             except TypeError:
                 callback_data = None
-
             except Exception as e:
                 last_error = e
                 error_text = str(e).lower()
-
                 if "doesn't exist" in error_text:
                     callback_data = None
                 else:
                     if attempt < max_retries:
                         await asyncio.sleep(retry_delay)
                         continue
-
                     break
 
         try:
             await message.click(col_index, row_index)
             return True
-
         except Exception as e:
             last_error = e
             error_text = str(e).lower()
@@ -957,14 +904,8 @@ async def click_meow_claim_buttons(message):
         for row_index, row in enumerate(rows):
             for col_index, button in enumerate(row):
                 button_text = getattr(button, "text", "") or ""
-
                 if any(text in button_text for text in target_texts):
-                    return await click_inline_button(
-                        message,
-                        button,
-                        row_index,
-                        col_index
-                    )
+                    return await click_inline_button(message, button, row_index, col_index)
 
         return False
 
@@ -983,7 +924,6 @@ async def delayed_click_fishing(client, phone, message, msg_key: str):
     try:
         delay = setting_float("FISHING_CLICK_DELAY", 2.0)
         delay = max(0.0, float(delay))
-
         await asyncio.sleep(delay)
 
         if msg_key in CLICKED_FISHING_MESSAGES:
@@ -997,23 +937,19 @@ async def delayed_click_fishing(client, phone, message, msg_key: str):
         fishing_btn = optimizations.find_fishing_button(fresh_message)
         if fishing_btn:
             success = await click_inline_button(
-                fresh_message,
-                fishing_btn,
+                fresh_message, fishing_btn,
                 getattr(fishing_btn, "_row_index", 0),
                 getattr(fishing_btn, "_col_index", 0)
             )
             if success:
                 _remember_clicked(CLICKED_FISHING_MESSAGES, msg_key)
                 print(f"🎣 [{msg_key}] Clicked fishing button (feed_cat)")
-
                 schedule_fishing_status_check(phone)
 
     except asyncio.CancelledError:
         return
-
     except Exception as e:
         print(f"❌ delayed_click_fishing error: {e}")
-
     finally:
         if FISHING_CLICK_TASKS.get(msg_key) is current_task:
             FISHING_CLICK_TASKS.pop(msg_key, None)
@@ -1025,7 +961,6 @@ async def delayed_click_pishi(client, message, msg_key: str):
     try:
         delay = setting_float("PISHI_CLICK_DELAY", 1.0)
         delay = max(0.0, float(delay))
-
         await asyncio.sleep(delay)
 
         if msg_key in PISHI_CLICKED_MESSAGES:
@@ -1039,8 +974,7 @@ async def delayed_click_pishi(client, message, msg_key: str):
         pishi_btn = optimizations.find_pishi_button(fresh_message)
         if pishi_btn:
             success = await click_inline_button(
-                fresh_message,
-                pishi_btn,
+                fresh_message, pishi_btn,
                 getattr(pishi_btn, "_row_index", 0),
                 getattr(pishi_btn, "_col_index", 0)
             )
@@ -1050,10 +984,8 @@ async def delayed_click_pishi(client, message, msg_key: str):
 
     except asyncio.CancelledError:
         return
-
     except Exception as e:
         print(f"❌ delayed_click_pishi error: {e}")
-
     finally:
         if PISHI_CLICK_TASKS.get(msg_key) is current_task:
             PISHI_CLICK_TASKS.pop(msg_key, None)
@@ -1065,7 +997,6 @@ async def delayed_click_meow(client, message, msg_key: str):
     try:
         delay = setting_float("MEOW_CLICK_DELAY", 1.0)
         delay = max(0.0, float(delay))
-
         await asyncio.sleep(delay)
 
         if msg_key in MEOW_CLICKED_MESSAGES:
@@ -1082,25 +1013,24 @@ async def delayed_click_meow(client, message, msg_key: str):
 
     except asyncio.CancelledError:
         return
-
     except Exception as e:
         print(f"❌ delayed_click_meow error: {e}")
-
     finally:
         if MEOW_CLICK_TASKS.get(msg_key) is current_task:
             MEOW_CLICK_TASKS.pop(msg_key, None)
 
 
 # ============================================================
-# Fishing probe sender
+# Fishing probe
 # ============================================================
 
 async def send_fishing_probe(client, phone: str, chat_ids, reason: str):
     print(f"🎣 [{mask_phone(phone)}] Fishing status probe: {reason}")
+    fishing_cmd = get_command("fishing")
 
     for chat_id in chat_ids:
         try:
-            sent_message = await client.send_message(chat_id, get_command("fishing"))
+            sent_message = await client.send_message(chat_id, fishing_cmd)
 
             if phone not in TRACKED_FISHING_MESSAGES:
                 TRACKED_FISHING_MESSAGES[phone] = {}
@@ -1131,7 +1061,6 @@ async def is_reply_to_self(client, message, self_id):
 
     if replied_message:
         sender = getattr(replied_message, "from_user", None)
-
         if sender and getattr(sender, "id", None) == self_id:
             return True
 
@@ -1139,7 +1068,6 @@ async def is_reply_to_self(client, message, self_id):
         return False
 
     cache_key = f"{message.chat.id}:{reply_to_message_id}"
-
     cached_owner = REPLY_OWNER_CACHE.get(cache_key)
 
     if cached_owner is not None:
@@ -1148,24 +1076,17 @@ async def is_reply_to_self(client, message, self_id):
     owner_id = None
 
     try:
-        fetched_message = await client.get_messages(
-            message.chat.id,
-            reply_to_message_id
-        )
-
+        fetched_message = await client.get_messages(message.chat.id, reply_to_message_id)
         if fetched_message:
             sender = getattr(fetched_message, "from_user", None)
-
             if sender:
                 owner_id = getattr(sender, "id", None)
-
     except Exception as e:
         print(f"❌ is_reply_to_self fetch error: {e}")
         owner_id = None
 
     if owner_id is not None:
         REPLY_OWNER_CACHE[cache_key] = owner_id
-
         if len(REPLY_OWNER_CACHE) > 10000:
             REPLY_OWNER_CACHE.clear()
 
@@ -1179,9 +1100,11 @@ async def handle_bot_message(client, phone: str, message):
         if not user or not user.get("is_active"):
             return
 
-        # ============================================================
+        # Jail gate — skip all processing if jailed
+        if int(user.get("jail_until") or 0) > int(time.time()):
+            return
+
         # Rescue cat handler
-        # ============================================================
         if (
             user.get("rescue_enabled")
             and global_feature_enabled("rescue")
@@ -1206,10 +1129,7 @@ async def handle_bot_message(client, phone: str, message):
 
                 return
 
-        # ============================================================
         # Normal logic — selected groups only
-        # ============================================================
-
         if not optimizations.message_is_from_selected_group(message, user.get("selected_groups", [])):
             return
 
@@ -1222,13 +1142,10 @@ async def handle_bot_message(client, phone: str, message):
         if not self_id:
             try:
                 self_user = getattr(client, "me", None)
-
                 if self_user is None:
                     self_user = await client.get_me()
-
                 self_id = self_user.id
                 ACCOUNT_SELF_IDS[phone] = self_id
-
             except:
                 return
 
@@ -1238,9 +1155,7 @@ async def handle_bot_message(client, phone: str, message):
         raw_text = message.text or message.caption or ""
         normalized = normalize_text(raw_text).lower()
 
-        # ============================================================
-        # Parse Pishi info reply
-        # ============================================================
+        # Parse Pishi info
         if user.get("pishi_enabled") and global_feature_enabled("pishi"):
             pishi_info = parse_pishi_info(raw_text)
 
@@ -1249,10 +1164,7 @@ async def handle_bot_message(client, phone: str, message):
                     update_pishi_info(phone, pishi_info)
 
                     add_account_log(
-                        phone,
-                        "pishi",
-                        "parse_info",
-                        "success",
+                        phone, "pishi", "parse_info", "success",
                         f"level={pishi_info.get('pishi_level_current')}/{pishi_info.get('pishi_level_max')} "
                         f"mps={pishi_info.get('pishi_mps')} "
                         f"capacity={pishi_info.get('pishi_capacity')} "
@@ -1265,25 +1177,19 @@ async def handle_bot_message(client, phone: str, message):
                 except Exception as e:
                     print(f"❌ update_pishi_info error [{mask_phone(phone)}]: {e}")
 
-        # ============================================================
         # Dynamic cooldown parsing
-        # ============================================================
         cooldown = parse_cooldown_seconds(raw_text)
         meow_response = user.get("meow_enabled") and is_meow_response(phone, message, normalized)
 
         if cooldown is not None:
             if user.get("fishing_enabled") and ("ماهی" in normalized or "ماهیا" in normalized):
                 schedule_feature(phone, "fishing", cooldown)
-
             elif meow_response:
                 schedule_feature(phone, "meow", cooldown)
-
             elif user.get("pishi_enabled") and "پیشی" in normalized and "ماهی" not in normalized:
                 schedule_feature(phone, "pishi", cooldown)
 
-        # ============================================================
-        # Fishing reply / edited reply
-        # ============================================================
+        # Fishing reply
         if user.get("fishing_enabled") and getattr(message, "reply_to_message_id", None):
             tracked_fishing_id = TRACKED_FISHING_MESSAGES.get(phone, {}).get(message.chat.id)
 
@@ -1296,7 +1202,6 @@ async def handle_bot_message(client, phone: str, message):
 
                     if msg_key not in CLICKED_FISHING_MESSAGES:
                         existing_task = FISHING_CLICK_TASKS.get(msg_key)
-
                         if existing_task and not existing_task.done():
                             existing_task.cancel()
 
@@ -1304,9 +1209,7 @@ async def handle_bot_message(client, phone: str, message):
                             delayed_click_fishing(client, phone, message, msg_key)
                         )
 
-        # ============================================================
         # Meow claim button
-        # ============================================================
         if meow_response and not user.get("pishi_enabled"):
             reply_markup = getattr(message, "reply_markup", None)
             inline_keyboard = getattr(reply_markup, "inline_keyboard", None) if reply_markup else None
@@ -1316,7 +1219,6 @@ async def handle_bot_message(client, phone: str, message):
 
                 if meow_msg_key not in MEOW_CLICKED_MESSAGES:
                     existing_task = MEOW_CLICK_TASKS.get(meow_msg_key)
-
                     if existing_task and not existing_task.done():
                         existing_task.cancel()
 
@@ -1324,9 +1226,7 @@ async def handle_bot_message(client, phone: str, message):
                         delayed_click_meow(client, message, meow_msg_key)
                     )
 
-        # ============================================================
         # Pishi claim buttons
-        # ============================================================
         if user.get("pishi_enabled"):
             is_fishing_message = "ماهی" in normalized or "ماهیا" in normalized
 
@@ -1344,7 +1244,6 @@ async def handle_bot_message(client, phone: str, message):
 
                 if pishi_msg_key not in PISHI_CLICKED_MESSAGES:
                     existing_task = PISHI_CLICK_TASKS.get(pishi_msg_key)
-
                     if existing_task and not existing_task.done():
                         existing_task.cancel()
 
@@ -1363,12 +1262,9 @@ async def handle_bot_message(client, phone: str, message):
 def _client_is_connected(client) -> bool:
     try:
         value = getattr(client, "is_connected", False)
-
         if callable(value):
             return bool(value())
-
         return bool(value)
-
     except:
         return False
 
@@ -1387,6 +1283,17 @@ async def smart_scheduler_loop(client, phone: str):
                 await asyncio.sleep(15)
                 continue
 
+            # ── Jail gate ──
+            now = int(time.time())
+            if int(account.get("jail_until") or 0) > now:
+                await asyncio.sleep(15)
+                continue
+
+            # ── FloodWait gate ──
+            if int(account.get("flood_wait_until") or 0) > now:
+                await asyncio.sleep(15)
+                continue
+
             chat_ids = get_selected_chat_ids(account)
 
             if not chat_ids:
@@ -1399,54 +1306,41 @@ async def smart_scheduler_loop(client, phone: str):
             except:
                 pass
 
-            now = int(time.time())
-
             # Global master kill switch
             if not global_feature_enabled("automation"):
                 await asyncio.sleep(15)
                 continue
 
-            # FloodWait block
-            if int(account.get("flood_wait_until") or 0) > now:
-                await asyncio.sleep(15)
-                continue
-
-            # ============================================================
-            # Meow
-            # ============================================================
+            # ── Meow ──
             if account.get("meow_enabled") and global_feature_enabled("meow"):
                 action = dynamic_action(account, "meow", now)
 
                 if action in ("send_initial", "send_due", "retry_after_parse_timeout"):
                     timeout = 0
-
                     if action == "retry_after_parse_timeout":
                         timeout = setting_int("DYNAMIC_WAIT_TIMEOUT_SECONDS", 0)
 
                     waiting_timestamp = -int(time.time())
 
                     claimed = claim_dynamic_feature(
-                        phone,
-                        "meow",
-                        action,
-                        waiting_timestamp,
-                        now,
-                        timeout
+                        phone, "meow", action, waiting_timestamp, now, timeout
                     )
 
                     if not claimed:
-                        print(f"⚠️ [{mask_phone(phone)}] Meow trigger skipped: already claimed or state changed")
+                        print(f"⚠️ [{mask_phone(phone)}] Meow trigger skipped")
                     else:
+                        meow_cmd = get_command("meow")
+
                         if action == "send_initial":
-                            print(f"😺 [{mask_phone(phone)}] No saved Meow time. Sending trigger once.")
+                            print(f"😺 [{mask_phone(phone)}] No saved Meow time. Sending trigger.")
                         elif action == "retry_after_parse_timeout":
-                            print(f"⚠️ [{mask_phone(phone)}] Meow parse timeout. Sending trigger again.")
+                            print(f"⚠️ [{mask_phone(phone)}] Meow parse timeout. Retrying.")
                         else:
                             print(f"😺 [{mask_phone(phone)}] Meow due from parsed bot time.")
 
                         for chat_id in chat_ids:
                             try:
-                                sent_message = await client.send_message(chat_id, get_command("meow"))
+                                sent_message = await client.send_message(chat_id, meow_cmd)
 
                                 if phone not in MEOW_TRACKED_MESSAGES:
                                     MEOW_TRACKED_MESSAGES[phone] = {}
@@ -1464,34 +1358,27 @@ async def smart_scheduler_loop(client, phone: str):
 
                             await asyncio.sleep(random.uniform(1.0, 3.0))
 
-            # ============================================================
-            # Pishi
-            # ============================================================
+            # ── Pishi ──
             if (
                 account.get("pishi_enabled")
                 and global_feature_enabled("pishi")
                 and now >= int(float(account.get("pishi_next_run") or 0))
             ):
                 interval = setting_int("PISHI_INTERVAL_SECONDS", 1800)
-
                 delay = max(60, int(interval)) + random.randint(2, 20)
                 scheduled_timestamp = int(time.time()) + delay
 
-                claimed = claim_interval_feature(
-                    phone,
-                    "pishi",
-                    scheduled_timestamp,
-                    now
-                )
+                claimed = claim_interval_feature(phone, "pishi", scheduled_timestamp, now)
 
                 if not claimed:
-                    print(f"⚠️ [{mask_phone(phone)}] Pishi trigger skipped: already claimed or state changed")
+                    print(f"⚠️ [{mask_phone(phone)}] Pishi trigger skipped")
                 else:
+                    pishi_cmd = get_command("pishi")
                     print(f"🐱 [{mask_phone(phone)}] Pishi due. Next run in {delay}s")
 
                     for chat_id in chat_ids:
                         try:
-                            await client.send_message(chat_id, get_command("pishi"))
+                            await client.send_message(chat_id, pishi_cmd)
                             print(f"🐱 [{mask_phone(phone)}] Pishi sent to {chat_id}")
 
                         except FloodWait as e:
@@ -1505,13 +1392,12 @@ async def smart_scheduler_loop(client, phone: str):
 
                         await asyncio.sleep(random.uniform(1.0, 3.0))
 
-            # ============================================================
-            # Fishing
-            # ============================================================
+            # ── Fishing ──
             fishing_sent_this_cycle = False
 
             if account.get("fishing_enabled") and global_feature_enabled("fishing"):
                 fishing_next_run = int(float(account.get("fishing_next_run") or 0))
+                fishing_cmd = get_command("fishing")
 
                 action = None
 
@@ -1524,16 +1410,11 @@ async def smart_scheduler_loop(client, phone: str):
                     waiting_timestamp = -int(time.time())
 
                     claimed = claim_dynamic_feature(
-                        phone,
-                        "fishing",
-                        action,
-                        waiting_timestamp,
-                        now,
-                        0
+                        phone, "fishing", action, waiting_timestamp, now, 0
                     )
 
                     if not claimed:
-                        print(f"⚠️ [{mask_phone(phone)}] Fishing trigger skipped: already claimed or state changed")
+                        print(f"⚠️ [{mask_phone(phone)}] Fishing trigger skipped")
                     else:
                         try:
                             update_fishing_status_check_at(phone, 0)
@@ -1541,13 +1422,13 @@ async def smart_scheduler_loop(client, phone: str):
                             pass
 
                         if action == "send_initial":
-                            print(f"🎣 [{mask_phone(phone)}] No saved Fishing time. Sending trigger once.")
+                            print(f"🎣 [{mask_phone(phone)}] No saved Fishing time. Sending trigger.")
                         else:
                             print(f"🎣 [{mask_phone(phone)}] Fishing due from parsed bot time.")
 
                         for chat_id in chat_ids:
                             try:
-                                sent_message = await client.send_message(chat_id, get_command("fishing"))
+                                sent_message = await client.send_message(chat_id, fishing_cmd)
 
                                 if phone not in TRACKED_FISHING_MESSAGES:
                                     TRACKED_FISHING_MESSAGES[phone] = {}
@@ -1574,13 +1455,7 @@ async def smart_scheduler_loop(client, phone: str):
                         claimed_status = claim_fishing_status_check(phone, now)
 
                         if claimed_status:
-                            await send_fishing_probe(
-                                client,
-                                phone,
-                                chat_ids,
-                                "post-click status check"
-                            )
-
+                            await send_fishing_probe(client, phone, chat_ids, "post-click status check")
                             fishing_sent_this_cycle = True
 
                 if not fishing_sent_this_cycle:
@@ -1593,14 +1468,11 @@ async def smart_scheduler_loop(client, phone: str):
                         next_periodic_check_at = now + periodic_interval
 
                         claimed_periodic = claim_fishing_periodic_check(
-                            phone,
-                            next_periodic_check_at,
-                            now
+                            phone, next_periodic_check_at, now
                         )
 
                         if claimed_periodic:
                             fresh_account = get_tg_account(phone) or account
-
                             current_next_run = int(float(fresh_account.get("fishing_next_run") or 0))
                             status_check_at = int(float(fresh_account.get("fishing_status_check_at") or 0))
 
@@ -1608,13 +1480,7 @@ async def smart_scheduler_loop(client, phone: str):
                             has_future_status_check = status_check_at > now
 
                             if not has_valid_parsed_time and not has_future_status_check:
-                                await send_fishing_probe(
-                                    client,
-                                    phone,
-                                    chat_ids,
-                                    "periodic time check"
-                                )
-
+                                await send_fishing_probe(client, phone, chat_ids, "periodic time check")
                                 fishing_sent_this_cycle = True
 
         except Exception as e:
@@ -1634,7 +1500,6 @@ def _get_concurrency_override(key, default):
         return default
 
     raw = str(raw or "").strip()
-
     if not raw:
         return default
 
@@ -1751,7 +1616,6 @@ async def _job_transfer(client, phone, backup_group_id, target_user_id):
     chat_id = int(backup_group_id)
 
     profile = await _job_fetch_profile(client, phone, backup_group_id)
-
     balance = (profile or {}).get("balance") or 0
 
     if balance <= 0:
@@ -1768,15 +1632,10 @@ async def _job_transfer(client, phone, backup_group_id, target_user_id):
 
     confirm_timeout = setting_int("TRANSFER_CONFIRM_TIMEOUT", 30)
 
-    confirmation = await _wait_for_bot_reply(
-        client,
-        chat_id,
-        sent.id,
-        timeout=confirm_timeout
-    )
+    confirmation = await _wait_for_bot_reply(client, chat_id, sent.id, timeout=confirm_timeout)
 
     if not confirmation:
-        print(f"❌ [{mask_phone(phone)}] Transfer confirmation message not received")
+        print(f"❌ [{mask_phone(phone)}] Transfer confirmation not received")
         return {"phone": phone, "status": "no_confirmation", "amount": balance}
 
     _track_backup_message(phone, chat_id, confirmation.id)
@@ -1799,12 +1658,7 @@ async def _job_transfer(client, phone, backup_group_id, target_user_id):
     for attempt in range(1, max_attempts + 1):
         await asyncio.sleep(random.uniform(1.0, 3.0))
 
-        future, handler = _watch_confirmation_edit(
-            client,
-            chat_id,
-            confirmation.id
-        )
-
+        future, handler = _watch_confirmation_edit(client, chat_id, confirmation.id)
         clicked = False
 
         try:
@@ -1812,41 +1666,28 @@ async def _job_transfer(client, phone, backup_group_id, target_user_id):
 
             if clicked:
                 try:
-                    edited_message = await asyncio.wait_for(
-                        future,
-                        timeout=edit_timeout
-                    )
-
+                    edited_message = await asyncio.wait_for(future, timeout=edit_timeout)
                     if edited_message:
                         print(f"✅ [{mask_phone(phone)}] Transfer confirmed after attempt {attempt}")
                         return {"phone": phone, "status": "confirmed", "amount": balance}
-
                 except asyncio.TimeoutError:
-                    print(
-                        f"⚠️ [{mask_phone(phone)}] Transfer success edit not detected "
-                        f"(attempt {attempt})"
-                    )
+                    print(f"⚠️ [{mask_phone(phone)}] Transfer success edit not detected (attempt {attempt})")
             else:
                 print(f"⚠️ [{mask_phone(phone)}] Confirm button click failed (attempt {attempt})")
 
         finally:
             if not future.done():
                 future.cancel()
-
             try:
                 client.remove_handler(handler, group=-11)
             except Exception:
                 pass
 
         try:
-            fresh_confirmation = await client.get_messages(
-                chat_id,
-                confirmation.id
-            )
+            fresh_confirmation = await client.get_messages(chat_id, confirmation.id)
 
             if fresh_confirmation:
                 confirmation = fresh_confirmation
-
                 raw_text = confirmation.text or confirmation.caption or ""
 
                 if TRANSFER_SUCCESS_TOKEN in normalize_text(raw_text):
@@ -1854,19 +1695,18 @@ async def _job_transfer(client, phone, backup_group_id, target_user_id):
                     return {"phone": phone, "status": "confirmed", "amount": balance}
 
                 fresh_button = _find_transfer_confirm_button(confirmation)
-
                 if fresh_button:
                     confirm_button = fresh_button
 
         except Exception as e:
-            print(f"⚠️ [{mask_phone(phone)}] Could not refresh confirmation message: {e}")
+            print(f"⚠️ [{mask_phone(phone)}] Could not refresh confirmation: {e}")
 
     print(f"❌ [{mask_phone(phone)}] Transfer confirmation failed after {max_attempts} attempts")
     return {"phone": phone, "status": "confirmation_failed", "amount": balance}
 
 
 # ============================================================
-# Orchestrators (concurrent)
+# Orchestrators
 # ============================================================
 
 async def update_status_for_user(user_id, job_id=None):
@@ -1882,10 +1722,7 @@ async def update_status_for_user(user_id, job_id=None):
 
     concurrency = _get_user_job_concurrency("status")
 
-    print(
-        f"🔄 Updating status for {len(accounts)} accounts "
-        f"(concurrency={concurrency})"
-    )
+    print(f"🔄 Updating status for {len(accounts)} accounts (concurrency={concurrency})")
 
     jobs = []
 
@@ -1905,17 +1742,11 @@ async def update_status_for_user(user_id, job_id=None):
                     in_backup_group=result.get("in_backup")
                 )
 
-                print(
-                    f"🔄 [{mask_phone(phone)}] status updated: "
-                    f"name={result.get('name')} in_backup={result.get('in_backup')}"
-                )
-
                 if job_id:
                     increment_job_processed(job_id, success=True)
 
             except Exception as e:
                 print(f"❌ update_status error [{mask_phone(phone)}]: {e}")
-
                 if job_id:
                     increment_job_processed(job_id, success=False)
 
@@ -1946,10 +1777,7 @@ async def update_profiles_for_user(user_id, job_id=None):
 
     concurrency = _get_user_job_concurrency("profile")
 
-    print(
-        f"🍬 Updating profiles for {len(accounts)} accounts "
-        f"(concurrency={concurrency})"
-    )
+    print(f"🍬 Updating profiles for {len(accounts)} accounts (concurrency={concurrency})")
 
     jobs = []
 
@@ -1962,13 +1790,10 @@ async def update_profiles_for_user(user_id, job_id=None):
                     phone,
                     lambda client: _job_fetch_profile(client, phone, backup_group_id)
                 )
-
                 if job_id:
                     increment_job_processed(job_id, success=True)
-
             except Exception as e:
                 print(f"❌ update_profiles error [{mask_phone(phone)}]: {e}")
-
                 if job_id:
                     increment_job_processed(job_id, success=False)
 
@@ -2005,10 +1830,7 @@ async def transfer_for_user(user_id, target_user_id, job_id=None):
 
     concurrency = _get_user_job_concurrency("transfer")
 
-    print(
-        f"💸 Transferring for {len(accounts)} accounts "
-        f"(concurrency={concurrency})"
-    )
+    print(f"💸 Transferring for {len(accounts)} accounts (concurrency={concurrency})")
 
     jobs = []
 
@@ -2019,20 +1841,12 @@ async def transfer_for_user(user_id, target_user_id, job_id=None):
             try:
                 await session_manager.run_with_client(
                     phone,
-                    lambda client: _job_transfer(
-                        client,
-                        phone,
-                        backup_group_id,
-                        target_user_id
-                    )
+                    lambda client: _job_transfer(client, phone, backup_group_id, target_user_id)
                 )
-
                 if job_id:
                     increment_job_processed(job_id, success=True)
-
             except Exception as e:
                 print(f"❌ transfer error [{mask_phone(phone)}]: {e}")
-
                 if job_id:
                     increment_job_processed(job_id, success=False)
 
@@ -2042,6 +1856,32 @@ async def transfer_for_user(user_id, target_user_id, job_id=None):
 
     if job_id:
         finish_job(job_id, 'completed')
+
+
+# ============================================================
+# Auto heist management
+# ============================================================
+
+def start_auto_heist(user_id, loop=None):
+    async def _start():
+        if user_id in AUTO_HEIST_TASKS:
+            task = AUTO_HEIST_TASKS[user_id]
+            if not task.done():
+                return
+
+        from heist import auto_heist_loop
+        task = asyncio.create_task(auto_heist_loop(user_id))
+        AUTO_HEIST_TASKS[user_id] = task
+
+    _schedule_coroutine(_start(), loop)
+
+
+def stop_auto_heist(user_id):
+    task = AUTO_HEIST_TASKS.get(user_id)
+    if task and not task.done():
+        task.cancel()
+    AUTO_HEIST_TASKS.pop(user_id, None)
+
 
 # ============================================================
 # Worker management
@@ -2091,17 +1931,11 @@ async def _start_worker(phone: str):
                 await handle_bot_message(client, phone, message)
 
             client.add_handler(
-                MessageHandler(
-                    handler,
-                    filters.user(BOT_USER_ID)
-                )
+                MessageHandler(handler, filters.user(BOT_USER_ID))
             )
 
             client.add_handler(
-                EditedMessageHandler(
-                    handler,
-                    filters.user(BOT_USER_ID)
-                )
+                EditedMessageHandler(handler, filters.user(BOT_USER_ID))
             )
 
         client = await session_manager.get_client(phone, setup=setup)
@@ -2158,7 +1992,6 @@ async def _start_worker(phone: str):
 
         if "AUTH_KEY_DUPLICATED" in error_text.upper() and START_ATTEMPTS.get(phone, 0) < 2:
             START_ATTEMPTS[phone] = START_ATTEMPTS.get(phone, 0) + 1
-
             retry_delay = 30 + (START_ATTEMPTS[phone] * 10)
 
             print(f"⚠️ AUTH_KEY_DUPLICATED for {mask_phone(phone)}. Retrying in {retry_delay}s...")
@@ -2260,6 +2093,10 @@ async def _stop_all_workers():
 
 async def _shutdown_sequence():
     await _stop_all_workers()
+
+    # Stop all auto heist loops
+    for user_id in list(AUTO_HEIST_TASKS.keys()):
+        stop_auto_heist(user_id)
 
     try:
         await session_manager.stop_all_clients()

@@ -31,48 +31,35 @@ DEFAULT_SETTINGS = {
     "ACCOUNT_START_INTERVAL": "3",
     "STOP_COOLDOWN_SECONDS": "5",
 
-    # Pishi is interval-based
     "PISHI_INTERVAL_SECONDS": "1800",
-
-    # Dynamic Meow parse timeout
     "DYNAMIC_WAIT_TIMEOUT_SECONDS": "0",
 
-    # Fishing status checks
     "FISHING_STATUS_CHECK_DELAY": "300",
     "FISHING_TIME_CHECK_INTERVAL": "900",
 
-    # Button click retry
     "BUTTON_CLICK_MAX_RETRIES": "10",
     "BUTTON_CLICK_RETRY_DELAY": "1.0",
 
-    # Click delays
     "FISHING_CLICK_DELAY": "2.0",
     "PISHI_CLICK_DELAY": "1.0",
     "MEOW_CLICK_DELAY": "1.0",
 
-    # ms = 4:30 means 4 minutes 30 seconds
-    # hm = 4:30 means 4 hours 30 minutes
     "TWO_PART_TIME_MODE": "ms",
 
-    # Profile fetch (میوهام) reply timeout
     "PROFILE_FETCH_TIMEOUT": "20",
 
-    # Concurrent account jobs
     "USER_JOB_CONCURRENCY": "3",
 
-    # Transfer confirmation
     "TRANSFER_CONFIRM_TIMEOUT": "30",
     "TRANSFER_CONFIRM_EDIT_TIMEOUT": "20",
     "TRANSFER_CONFIRM_MAX_RETRIES": "3",
 
-    # Rescue cat
     "RESCUE_MAX_CLICKS": "15",
     "RESCUE_FIRST_CLICK_DELAY": "0.1",
     "RESCUE_FAST_CLICK_MIN_DELAY": "0.10",
     "RESCUE_FAST_CLICK_MAX_DELAY": "0.25",
     "RESCUE_NORMAL_CLICK_DELAY": "1.0",
 
-    # Global automation toggles
     "GLOBAL_AUTOMATION_ENABLED": "1",
     "GLOBAL_MEOW_ENABLED": "1",
     "GLOBAL_PISHI_ENABLED": "1",
@@ -80,10 +67,8 @@ DEFAULT_SETTINGS = {
     "GLOBAL_RESCUE_ENABLED": "1",
     "GLOBAL_TRANSFER_ENABLED": "1",
 
-    # Maintenance
     "MAINTENANCE_MODE": "0",
 
-    # Command templates
     "MEOW_COMMAND": "میو",
     "PISHI_COMMAND": "پیشی",
     "FISHING_COMMAND": "ماهی",
@@ -155,14 +140,12 @@ def get_db_cursor(commit: bool = False, dict_cursor: bool = False):
 def encrypt_session(session_string: str) -> str:
     if not session_string:
         return ""
-
     return cipher.encrypt(session_string.encode()).decode()
 
 
 def decrypt_session(encrypted_string: str) -> str:
     if not encrypted_string:
         return ""
-
     try:
         return cipher.decrypt(encrypted_string.encode()).decode()
     except InvalidToken:
@@ -175,9 +158,7 @@ def decrypt_session(encrypted_string: str) -> str:
 
 def init_db():
     with get_db_cursor(commit=True) as cur:
-        # ----------------------------------------------------------
-        # Tables
-        # ----------------------------------------------------------
+        # ── Tables ──
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS web_users (
@@ -225,21 +206,6 @@ def init_db():
         """)
 
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS jobs (
-                id SERIAL PRIMARY KEY,
-                user_id INTEGER NOT NULL,
-                type TEXT NOT NULL,
-                status TEXT DEFAULT 'running',
-                total_accounts INTEGER DEFAULT 0,
-                processed_accounts INTEGER DEFAULT 0,
-                success_count INTEGER DEFAULT 0,
-                failed_count INTEGER DEFAULT 0,
-                started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                finished_at TIMESTAMP
-            )
-        """)
-
-        cur.execute("""
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
@@ -259,14 +225,91 @@ def init_db():
             )
         """)
 
-        # ----------------------------------------------------------
-        # Migrations for older databases
-        # ----------------------------------------------------------
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS jobs (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                type TEXT NOT NULL,
+                status TEXT DEFAULT 'running',
+                total_accounts INTEGER DEFAULT 0,
+                processed_accounts INTEGER DEFAULT 0,
+                success_count INTEGER DEFAULT 0,
+                failed_count INTEGER DEFAULT 0,
+                started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                finished_at TIMESTAMP
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS heist_config (
+                user_id INTEGER PRIMARY KEY,
+                chat_id BIGINT DEFAULT 0,
+                use_backup_group INTEGER DEFAULT 0,
+                selected_level INTEGER DEFAULT 1,
+                auto_enabled INTEGER DEFAULT 0,
+                auto_level_mode TEXT DEFAULT 'best_available',
+                steal_count INTEGER DEFAULT 0,
+                move_count INTEGER DEFAULT 0,
+                listen_timeout INTEGER DEFAULT 600,
+                heartbeat_enabled INTEGER DEFAULT 1,
+                auto_delay_min INTEGER DEFAULT 5,
+                auto_delay_max INTEGER DEFAULT 15
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS heist_accounts (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                phone TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                UNIQUE(user_id, position)
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS heist_cooldowns (
+                user_id INTEGER NOT NULL,
+                level INTEGER NOT NULL,
+                cooldown_until BIGINT DEFAULT 0,
+                PRIMARY KEY (user_id, level)
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS heist_state (
+                user_id INTEGER PRIMARY KEY,
+                state TEXT DEFAULT 'idle',
+                message_id BIGINT DEFAULT 0,
+                chat_id BIGINT DEFAULT 0,
+                level INTEGER DEFAULT 0,
+                steal_clicks_done INTEGER DEFAULT 0,
+                move_clicks_done INTEGER DEFAULT 0,
+                started_at BIGINT DEFAULT 0,
+                updated_at BIGINT DEFAULT 0,
+                error_message TEXT DEFAULT ''
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS heist_logs (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                level INTEGER DEFAULT 0,
+                result TEXT DEFAULT '',
+                duration_seconds INTEGER DEFAULT 0,
+                accounts_used TEXT DEFAULT '[]',
+                started_at BIGINT DEFAULT 0,
+                finished_at BIGINT DEFAULT 0
+            )
+        """)
+
+        # ── Migrations ──
 
         cur.execute("""
             DO $$
             BEGIN
-                -- web_users migrations
+                -- web_users
                 IF NOT EXISTS (
                     SELECT 1 FROM information_schema.columns
                     WHERE table_name='web_users' AND column_name='is_disabled'
@@ -281,7 +324,7 @@ def init_db():
                     ALTER TABLE web_users ADD COLUMN backup_group_id TEXT DEFAULT '';
                 END IF;
 
-                -- tg_accounts migrations
+                -- tg_accounts: uid
                 IF NOT EXISTS (
                     SELECT 1 FROM information_schema.columns
                     WHERE table_name='tg_accounts' AND column_name='uid'
@@ -289,6 +332,7 @@ def init_db():
                     ALTER TABLE tg_accounts ADD COLUMN uid TEXT DEFAULT '';
                 END IF;
 
+                -- tg_accounts: features
                 IF NOT EXISTS (
                     SELECT 1 FROM information_schema.columns
                     WHERE table_name='tg_accounts' AND column_name='pishi_enabled'
@@ -317,6 +361,7 @@ def init_db():
                     ALTER TABLE tg_accounts ADD COLUMN rescue_groups TEXT DEFAULT '[]';
                 END IF;
 
+                -- tg_accounts: name / backup
                 IF NOT EXISTS (
                     SELECT 1 FROM information_schema.columns
                     WHERE table_name='tg_accounts' AND column_name='account_name'
@@ -331,6 +376,7 @@ def init_db():
                     ALTER TABLE tg_accounts ADD COLUMN in_backup_group INTEGER DEFAULT -1;
                 END IF;
 
+                -- tg_accounts: timers
                 IF NOT EXISTS (
                     SELECT 1 FROM information_schema.columns
                     WHERE table_name='tg_accounts' AND column_name='meow_next_run'
@@ -366,7 +412,7 @@ def init_db():
                     ALTER TABLE tg_accounts ADD COLUMN fishing_periodic_check_at BIGINT DEFAULT 0;
                 END IF;
 
-                -- Profile fields
+                -- tg_accounts: profile fields
                 IF NOT EXISTS (
                     SELECT 1 FROM information_schema.columns
                     WHERE table_name='tg_accounts' AND column_name='balance'
@@ -430,7 +476,7 @@ def init_db():
                     ALTER TABLE tg_accounts ADD COLUMN profile_updated_at BIGINT DEFAULT 0;
                 END IF;
 
-                -- Pishi info fields
+                -- tg_accounts: pishi info
                 IF NOT EXISTS (
                     SELECT 1 FROM information_schema.columns
                     WHERE table_name='tg_accounts' AND column_name='pishi_rank_number'
@@ -480,7 +526,7 @@ def init_db():
                     ALTER TABLE tg_accounts ADD COLUMN pishi_info_updated_at BIGINT DEFAULT 0;
                 END IF;
 
-                -- Session / reliability fields
+                -- tg_accounts: session / reliability
                 IF NOT EXISTS (
                     SELECT 1 FROM information_schema.columns
                     WHERE table_name='tg_accounts' AND column_name='session_status'
@@ -501,12 +547,25 @@ def init_db():
                 ) THEN
                     ALTER TABLE tg_accounts ADD COLUMN flood_wait_until BIGINT DEFAULT 0;
                 END IF;
+
+                -- tg_accounts: jail
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='jail_until'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN jail_until BIGINT DEFAULT 0;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='jail_reason'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN jail_reason TEXT DEFAULT '';
+                END IF;
             END $$;
         """)
 
-        # ----------------------------------------------------------
-        # Convert old REAL / DOUBLE PRECISION timer columns to BIGINT
-        # ----------------------------------------------------------
+        # ── Convert old REAL timer columns to BIGINT ──
 
         cur.execute("""
             DO $$
@@ -518,13 +577,9 @@ def init_db():
                       AND data_type <> 'bigint'
                 ) THEN
                     ALTER TABLE tg_accounts
-                    ALTER COLUMN meow_next_run
-                    TYPE BIGINT
+                    ALTER COLUMN meow_next_run TYPE BIGINT
                     USING ROUND(COALESCE(meow_next_run, 0))::BIGINT;
-
-                    ALTER TABLE tg_accounts
-                    ALTER COLUMN meow_next_run
-                    SET DEFAULT 0;
+                    ALTER TABLE tg_accounts ALTER COLUMN meow_next_run SET DEFAULT 0;
                 END IF;
 
                 IF EXISTS (
@@ -534,13 +589,9 @@ def init_db():
                       AND data_type <> 'bigint'
                 ) THEN
                     ALTER TABLE tg_accounts
-                    ALTER COLUMN pishi_next_run
-                    TYPE BIGINT
+                    ALTER COLUMN pishi_next_run TYPE BIGINT
                     USING ROUND(COALESCE(pishi_next_run, 0))::BIGINT;
-
-                    ALTER TABLE tg_accounts
-                    ALTER COLUMN pishi_next_run
-                    SET DEFAULT 0;
+                    ALTER TABLE tg_accounts ALTER COLUMN pishi_next_run SET DEFAULT 0;
                 END IF;
 
                 IF EXISTS (
@@ -550,13 +601,9 @@ def init_db():
                       AND data_type <> 'bigint'
                 ) THEN
                     ALTER TABLE tg_accounts
-                    ALTER COLUMN fishing_next_run
-                    TYPE BIGINT
+                    ALTER COLUMN fishing_next_run TYPE BIGINT
                     USING ROUND(COALESCE(fishing_next_run, 0))::BIGINT;
-
-                    ALTER TABLE tg_accounts
-                    ALTER COLUMN fishing_next_run
-                    SET DEFAULT 0;
+                    ALTER TABLE tg_accounts ALTER COLUMN fishing_next_run SET DEFAULT 0;
                 END IF;
 
                 IF EXISTS (
@@ -566,13 +613,9 @@ def init_db():
                       AND data_type <> 'bigint'
                 ) THEN
                     ALTER TABLE tg_accounts
-                    ALTER COLUMN fishing_status_check_at
-                    TYPE BIGINT
+                    ALTER COLUMN fishing_status_check_at TYPE BIGINT
                     USING ROUND(COALESCE(fishing_status_check_at, 0))::BIGINT;
-
-                    ALTER TABLE tg_accounts
-                    ALTER COLUMN fishing_status_check_at
-                    SET DEFAULT 0;
+                    ALTER TABLE tg_accounts ALTER COLUMN fishing_status_check_at SET DEFAULT 0;
                 END IF;
 
                 IF EXISTS (
@@ -582,20 +625,14 @@ def init_db():
                       AND data_type <> 'bigint'
                 ) THEN
                     ALTER TABLE tg_accounts
-                    ALTER COLUMN fishing_periodic_check_at
-                    TYPE BIGINT
+                    ALTER COLUMN fishing_periodic_check_at TYPE BIGINT
                     USING ROUND(COALESCE(fishing_periodic_check_at, 0))::BIGINT;
-
-                    ALTER TABLE tg_accounts
-                    ALTER COLUMN fishing_periodic_check_at
-                    SET DEFAULT 0;
+                    ALTER TABLE tg_accounts ALTER COLUMN fishing_periodic_check_at SET DEFAULT 0;
                 END IF;
             END $$;
         """)
 
-        # ----------------------------------------------------------
-        # Insert default settings
-        # ----------------------------------------------------------
+        # ── Default settings ──
 
         for key, value in DEFAULT_SETTINGS.items():
             cur.execute(
@@ -607,9 +644,7 @@ def init_db():
                 (key, value)
             )
 
-    # ----------------------------------------------------------
-    # Ensure UIDs exist for old accounts
-    # ----------------------------------------------------------
+    # ── Ensure UIDs ──
 
     ensure_account_uids()
 
@@ -621,9 +656,7 @@ def init_db():
             """
         )
 
-    # ----------------------------------------------------------
-    # Create admin user if env vars are set
-    # ----------------------------------------------------------
+    # ── Admin user ──
 
     admin_user = os.getenv("ADMIN_USERNAME")
     admin_pass = os.getenv("ADMIN_PASSWORD")
@@ -677,7 +710,6 @@ def set_setting(key, value):
 
 def get_setting_int(key, default=0):
     value = get_setting(key, str(default))
-
     try:
         return int(float(value))
     except:
@@ -686,7 +718,6 @@ def get_setting_int(key, default=0):
 
 def get_setting_float(key, default=0.0):
     value = get_setting(key, str(default))
-
     try:
         return float(value)
     except:
@@ -699,7 +730,6 @@ def get_setting_float(key, default=0.0):
 
 def create_web_user(username, password, is_admin=False):
     pw_hash = generate_password_hash(password)
-
     with get_db_cursor(commit=True) as cur:
         cur.execute(
             "INSERT INTO web_users (username, password_hash, is_admin) VALUES (%s, %s, %s)",
@@ -718,7 +748,6 @@ def get_web_user(username):
     result = dict(row)
     result["is_disabled"] = bool(result.get("is_disabled"))
     result["is_admin"] = bool(result.get("is_admin"))
-
     return result
 
 
@@ -733,16 +762,13 @@ def get_web_user_by_id(user_id):
     result = dict(row)
     result["is_disabled"] = bool(result.get("is_disabled"))
     result["is_admin"] = bool(result.get("is_admin"))
-
     return result
 
 
 def verify_web_user(username, password):
     user = get_web_user(username)
-
     if user and check_password_hash(user["password_hash"], password):
         return user
-
     return None
 
 
@@ -803,16 +829,13 @@ def create_invite(code):
 def get_all_invites():
     with get_db_cursor(dict_cursor=True) as cur:
         cur.execute("SELECT * FROM invites ORDER BY created_at DESC")
-        rows = [dict(row) for row in cur.fetchall()]
-
-    return rows
+        return [dict(row) for row in cur.fetchall()]
 
 
 def get_valid_invite(code):
     with get_db_cursor(dict_cursor=True) as cur:
         cur.execute("SELECT * FROM invites WHERE code = %s AND used = 0", (code,))
         row = cur.fetchone()
-
     return dict(row) if row else None
 
 
@@ -836,54 +859,34 @@ def generate_account_uid():
 def generate_unique_account_uid():
     for _ in range(30):
         uid = generate_account_uid()
-
         with get_db_cursor(dict_cursor=True) as cur:
-            cur.execute(
-                "SELECT 1 FROM tg_accounts WHERE uid = %s",
-                (uid,)
-            )
-
+            cur.execute("SELECT 1 FROM tg_accounts WHERE uid = %s", (uid,))
             if not cur.fetchone():
                 return uid
-
     raise RuntimeError("Could not generate a unique account UID")
 
 
 def ensure_account_uids():
     with get_db_cursor(commit=True, dict_cursor=True) as cur:
         cur.execute(
-            """
-            SELECT uid
-            FROM tg_accounts
-            WHERE uid IS NOT NULL
-              AND uid <> ''
-            """
+            "SELECT uid FROM tg_accounts WHERE uid IS NOT NULL AND uid <> ''"
         )
-
         existing_uids = {row["uid"] for row in cur.fetchall()}
 
         cur.execute(
-            """
-            SELECT phone
-            FROM tg_accounts
-            WHERE uid IS NULL
-               OR uid = ''
-            """
+            "SELECT phone FROM tg_accounts WHERE uid IS NULL OR uid = ''"
         )
-
         missing = cur.fetchall()
 
         for row in missing:
             for _ in range(30):
                 uid = generate_account_uid()
-
                 if uid not in existing_uids:
                     break
             else:
                 raise RuntimeError("Could not generate a unique account UID")
 
             existing_uids.add(uid)
-
             cur.execute(
                 "UPDATE tg_accounts SET uid = %s WHERE phone = %s",
                 (uid, row["phone"])
@@ -896,10 +899,8 @@ def ensure_account_uids():
 
 def mask_phone(phone):
     s = str(phone or "").strip()
-
     if len(s) <= 4:
         return "****"
-
     return s[:3] + "***" + s[-4:]
 
 
@@ -911,33 +912,19 @@ def add_account_log(phone, feature, action, status, message, account_uid=None):
     try:
         uid = account_uid or ""
 
-        if not uid:
+        if not uid and phone:
             account = get_tg_account(phone)
             uid = (account or {}).get("uid", "")
 
         with get_db_cursor(commit=True) as cur:
             cur.execute(
                 """
-                INSERT INTO account_logs (
-                    account_uid,
-                    phone,
-                    feature,
-                    action,
-                    status,
-                    message
-                )
+                INSERT INTO account_logs (account_uid, phone, feature, action, status, message)
                 VALUES (%s, %s, %s, %s, %s, %s)
                 """,
-                (
-                    uid,
-                    str(phone or ""),
-                    str(feature or ""),
-                    str(action or ""),
-                    str(status or ""),
-                    str(message or "")
-                )
+                (uid, str(phone or ""), str(feature or ""), str(action or ""),
+                 str(status or ""), str(message or ""))
             )
-
     except Exception as e:
         print(f"❌ add_account_log error: {e}")
 
@@ -945,16 +932,9 @@ def add_account_log(phone, feature, action, status, message, account_uid=None):
 def get_account_logs(account_uid, limit=200):
     with get_db_cursor(dict_cursor=True) as cur:
         cur.execute(
-            """
-            SELECT *
-            FROM account_logs
-            WHERE account_uid = %s
-            ORDER BY id DESC
-            LIMIT %s
-            """,
+            "SELECT * FROM account_logs WHERE account_uid = %s ORDER BY id DESC LIMIT %s",
             (str(account_uid or ""), int(limit))
         )
-
         return [dict(row) for row in cur.fetchall()]
 
 
@@ -965,13 +945,7 @@ def get_account_logs(account_uid, limit=200):
 def update_session_status(phone, status, error=""):
     with get_db_cursor(commit=True) as cur:
         cur.execute(
-            """
-            UPDATE tg_accounts
-            SET
-                session_status = %s,
-                last_error = %s
-            WHERE phone = %s
-            """,
+            "UPDATE tg_accounts SET session_status = %s, last_error = %s WHERE phone = %s",
             (str(status or "unknown"), str(error or ""), str(phone))
         )
 
@@ -979,14 +953,9 @@ def update_session_status(phone, status, error=""):
 def set_flood_wait(phone, seconds):
     seconds = max(0, int(seconds))
     until = int(time.time()) + seconds
-
     with get_db_cursor(commit=True) as cur:
         cur.execute(
-            """
-            UPDATE tg_accounts
-            SET flood_wait_until = %s
-            WHERE phone = %s
-            """,
+            "UPDATE tg_accounts SET flood_wait_until = %s WHERE phone = %s",
             (until, str(phone))
         )
 
@@ -994,11 +963,7 @@ def set_flood_wait(phone, seconds):
 def clear_flood_wait(phone):
     with get_db_cursor(commit=True) as cur:
         cur.execute(
-            """
-            UPDATE tg_accounts
-            SET flood_wait_until = 0
-            WHERE phone = %s
-            """,
+            "UPDATE tg_accounts SET flood_wait_until = 0 WHERE phone = %s",
             (str(phone),)
         )
 
@@ -1025,7 +990,6 @@ def _bool(value):
 def _int_or_none(value):
     if value is None:
         return None
-
     try:
         return int(float(value))
     except:
@@ -1056,11 +1020,9 @@ def _row_to_account(row):
     acc["meow_next_run"] = int(float(acc.get("meow_next_run") or 0))
     acc["pishi_next_run"] = int(float(acc.get("pishi_next_run") or 0))
     acc["fishing_next_run"] = int(float(acc.get("fishing_next_run") or 0))
-
     acc["fishing_status_check_at"] = int(float(acc.get("fishing_status_check_at") or 0))
     acc["fishing_periodic_check_at"] = int(float(acc.get("fishing_periodic_check_at") or 0))
 
-    # UID / name / backup
     acc["uid"] = acc.get("uid") or ""
     acc["account_name"] = acc.get("account_name") or ""
 
@@ -1069,7 +1031,6 @@ def _row_to_account(row):
     except Exception:
         acc["in_backup_group"] = -1
 
-    # Profile fields
     acc["balance"] = int(float(acc.get("balance") or 0))
     acc["balance_rank"] = int(float(acc.get("balance_rank") or 0))
     acc["meow_count"] = int(float(acc.get("meow_count") or 0))
@@ -1080,7 +1041,6 @@ def _row_to_account(row):
     acc["level_progress"] = acc.get("level_progress") or ""
     acc["profile_updated_at"] = int(float(acc.get("profile_updated_at") or 0))
 
-    # Pishi info fields
     acc["pishi_rank_number"] = int(float(acc.get("pishi_rank_number") or 0))
     acc["pishi_level_current"] = int(float(acc.get("pishi_level_current") or 0))
     acc["pishi_level_max"] = int(float(acc.get("pishi_level_max") or 0))
@@ -1089,12 +1049,13 @@ def _row_to_account(row):
     acc["pishi_upgrade_cost"] = int(float(acc.get("pishi_upgrade_cost") or 0))
     acc["pishi_info_updated_at"] = int(float(acc.get("pishi_info_updated_at") or 0))
 
-    # Session / reliability fields
     acc["session_status"] = acc.get("session_status") or "unknown"
     acc["last_error"] = acc.get("last_error") or ""
     acc["flood_wait_until"] = int(float(acc.get("flood_wait_until") or 0))
 
-    # Compatibility alias
+    acc["jail_until"] = int(float(acc.get("jail_until") or 0))
+    acc["jail_reason"] = acc.get("jail_reason") or ""
+
     acc["fish_enabled"] = acc["pishi_enabled"]
 
     return acc
@@ -1127,33 +1088,24 @@ def save_tg_account(
 
         if meow_next_run is None:
             meow_next_run = existing.get("meow_next_run", 0)
-
         if pishi_next_run is None:
             pishi_next_run = existing.get("pishi_next_run", 0)
-
         if fishing_next_run is None:
             fishing_next_run = existing.get("fishing_next_run", 0)
-
         if rescue_enabled is None:
             rescue_enabled = existing.get("rescue_enabled", False)
-
         if rescue_groups is None:
             rescue_groups = existing.get("rescue_groups", [])
     else:
         uid = generate_unique_account_uid()
-
         if meow_next_run is None:
             meow_next_run = 0
-
         if pishi_next_run is None:
             pishi_next_run = 0
-
         if fishing_next_run is None:
             fishing_next_run = 0
-
         if rescue_enabled is None:
             rescue_enabled = False
-
         if rescue_groups is None:
             rescue_groups = []
 
@@ -1163,21 +1115,11 @@ def save_tg_account(
         cur.execute(
             """
             INSERT INTO tg_accounts (
-                phone,
-                uid,
-                owner_id,
-                session_string,
-                selected_groups,
-                meow_enabled,
-                pishi_enabled,
-                fishing_enabled,
-                rescue_enabled,
-                rescue_groups,
-                is_active,
-                cached_groups,
-                meow_next_run,
-                pishi_next_run,
-                fishing_next_run
+                phone, uid, owner_id, session_string, selected_groups,
+                meow_enabled, pishi_enabled, fishing_enabled,
+                rescue_enabled, rescue_groups,
+                is_active, cached_groups,
+                meow_next_run, pishi_next_run, fishing_next_run
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (phone) DO UPDATE SET
@@ -1197,18 +1139,11 @@ def save_tg_account(
                 fishing_next_run = EXCLUDED.fishing_next_run
             """,
             (
-                str(phone),
-                uid,
-                owner_id,
-                encrypted_session,
+                str(phone), uid, owner_id, encrypted_session,
                 _json_dumps(selected_groups),
-                _bool(meow_enabled),
-                _bool(pishi_enabled),
-                _bool(fishing_enabled),
-                _bool(rescue_enabled),
-                _json_dumps(rescue_groups),
-                _bool(is_active),
-                _json_dumps(cached_groups),
+                _bool(meow_enabled), _bool(pishi_enabled), _bool(fishing_enabled),
+                _bool(rescue_enabled), _json_dumps(rescue_groups),
+                _bool(is_active), _json_dumps(cached_groups),
                 int(float(meow_next_run or 0)),
                 int(float(pishi_next_run or 0)),
                 int(float(fishing_next_run or 0))
@@ -1220,23 +1155,16 @@ def get_tg_account(phone):
     with get_db_cursor(dict_cursor=True) as cur:
         cur.execute("SELECT * FROM tg_accounts WHERE phone = %s", (str(phone),))
         row = cur.fetchone()
-
     return _row_to_account(row)
 
 
 def get_tg_account_by_uid(uid):
     with get_db_cursor(dict_cursor=True) as cur:
         cur.execute(
-            """
-            SELECT *
-            FROM tg_accounts
-            WHERE uid = %s
-              AND uid <> ''
-            """,
+            "SELECT * FROM tg_accounts WHERE uid = %s AND uid <> ''",
             (str(uid or ""),)
         )
         row = cur.fetchone()
-
     return _row_to_account(row)
 
 
@@ -1246,17 +1174,13 @@ def get_tg_accounts_for_user(owner_id):
             "SELECT * FROM tg_accounts WHERE owner_id = %s ORDER BY created_at DESC",
             (owner_id,)
         )
-        rows = [_row_to_account(row) for row in cur.fetchall()]
-
-    return rows
+        return [_row_to_account(row) for row in cur.fetchall()]
 
 
 def get_all_tg_accounts():
     with get_db_cursor(dict_cursor=True) as cur:
         cur.execute("SELECT * FROM tg_accounts")
-        rows = [_row_to_account(row) for row in cur.fetchall()]
-
-    return rows
+        return [_row_to_account(row) for row in cur.fetchall()]
 
 
 def delete_tg_account(phone, owner_id):
@@ -1267,17 +1191,11 @@ def delete_tg_account(phone, owner_id):
         )
 
 
-def update_account_next_run(
-    phone,
-    meow_next_run=None,
-    pishi_next_run=None,
-    fishing_next_run=None
-):
+def update_account_next_run(phone, meow_next_run=None, pishi_next_run=None, fishing_next_run=None):
     with get_db_cursor(commit=True) as cur:
         cur.execute(
             """
-            UPDATE tg_accounts
-            SET
+            UPDATE tg_accounts SET
                 meow_next_run = COALESCE(%s, meow_next_run),
                 pishi_next_run = COALESCE(%s, pishi_next_run),
                 fishing_next_run = COALESCE(%s, fishing_next_run)
@@ -1296,8 +1214,7 @@ def update_account_meta(phone, account_name=None, in_backup_group=None):
     with get_db_cursor(commit=True) as cur:
         cur.execute(
             """
-            UPDATE tg_accounts
-            SET
+            UPDATE tg_accounts SET
                 account_name = COALESCE(%s, account_name),
                 in_backup_group = COALESCE(%s, in_backup_group)
             WHERE phone = %s
@@ -1307,22 +1224,14 @@ def update_account_meta(phone, account_name=None, in_backup_group=None):
 
 
 def update_account_profile(
-    phone,
-    account_name=None,
-    balance=None,
-    balance_rank=None,
-    meow_count=None,
-    meow_rank=None,
-    street_cats=None,
-    street_cats_rank=None,
-    level=None,
-    level_progress=None
+    phone, account_name=None, balance=None, balance_rank=None,
+    meow_count=None, meow_rank=None, street_cats=None,
+    street_cats_rank=None, level=None, level_progress=None
 ):
     with get_db_cursor(commit=True) as cur:
         cur.execute(
             """
-            UPDATE tg_accounts
-            SET
+            UPDATE tg_accounts SET
                 account_name = COALESCE(%s, account_name),
                 balance = COALESCE(%s, balance),
                 balance_rank = COALESCE(%s, balance_rank),
@@ -1336,17 +1245,9 @@ def update_account_profile(
             WHERE phone = %s
             """,
             (
-                account_name,
-                balance,
-                balance_rank,
-                meow_count,
-                meow_rank,
-                street_cats,
-                street_cats_rank,
-                level,
-                level_progress,
-                int(time.time()),
-                str(phone)
+                account_name, balance, balance_rank, meow_count, meow_rank,
+                street_cats, street_cats_rank, level, level_progress,
+                int(time.time()), str(phone)
             )
         )
 
@@ -1355,8 +1256,7 @@ def update_pishi_info(phone, data):
     with get_db_cursor(commit=True) as cur:
         cur.execute(
             """
-            UPDATE tg_accounts
-            SET
+            UPDATE tg_accounts SET
                 pishi_rank_number = COALESCE(%s, pishi_rank_number),
                 pishi_level_current = COALESCE(%s, pishi_level_current),
                 pishi_level_max = COALESCE(%s, pishi_level_max),
@@ -1383,21 +1283,9 @@ def update_pishi_info(phone, data):
 # Atomic trigger claims
 # ============================================================
 
-def claim_dynamic_feature(
-    phone,
-    feature,
-    mode,
-    waiting_timestamp,
-    now,
-    timeout=0
-):
-    columns = {
-        "meow": "meow_next_run",
-        "fishing": "fishing_next_run",
-    }
-
+def claim_dynamic_feature(phone, feature, mode, waiting_timestamp, now, timeout=0):
+    columns = {"meow": "meow_next_run", "fishing": "fishing_next_run"}
     col = columns.get(feature)
-
     if not col:
         return False
 
@@ -1408,42 +1296,21 @@ def claim_dynamic_feature(
         with get_db_cursor(commit=True) as cur:
             if mode == "send_initial":
                 cur.execute(
-                    f"""
-                    UPDATE tg_accounts
-                    SET {col} = %s
-                    WHERE phone = %s
-                      AND ({col} IS NULL OR {col} = 0)
-                    """,
+                    f"UPDATE tg_accounts SET {col} = %s WHERE phone = %s AND ({col} IS NULL OR {col} = 0)",
                     (waiting_timestamp, str(phone))
                 )
-
             elif mode == "send_due":
                 cur.execute(
-                    f"""
-                    UPDATE tg_accounts
-                    SET {col} = %s
-                    WHERE phone = %s
-                      AND {col} > 0
-                      AND {col} <= %s
-                    """,
+                    f"UPDATE tg_accounts SET {col} = %s WHERE phone = %s AND {col} > 0 AND {col} <= %s",
                     (waiting_timestamp, str(phone), now)
                 )
-
             elif mode == "retry_after_parse_timeout":
                 timeout = max(0, int(float(timeout)))
                 cutoff = now - timeout
-
                 cur.execute(
-                    f"""
-                    UPDATE tg_accounts
-                    SET {col} = %s
-                    WHERE phone = %s
-                      AND {col} < 0
-                      AND (-{col}) <= %s
-                    """,
+                    f"UPDATE tg_accounts SET {col} = %s WHERE phone = %s AND {col} < 0 AND (-{col}) <= %s",
                     (waiting_timestamp, str(phone), cutoff)
                 )
-
             else:
                 return False
 
@@ -1457,12 +1324,8 @@ def claim_dynamic_feature(
 
 
 def claim_interval_feature(phone, feature, scheduled_timestamp, now):
-    columns = {
-        "pishi": "pishi_next_run",
-    }
-
+    columns = {"pishi": "pishi_next_run"}
     col = columns.get(feature)
-
     if not col:
         return False
 
@@ -1472,12 +1335,7 @@ def claim_interval_feature(phone, feature, scheduled_timestamp, now):
 
         with get_db_cursor(commit=True) as cur:
             cur.execute(
-                f"""
-                UPDATE tg_accounts
-                SET {col} = %s
-                WHERE phone = %s
-                  AND ({col} IS NULL OR {col} <= %s)
-                """,
+                f"UPDATE tg_accounts SET {col} = %s WHERE phone = %s AND ({col} IS NULL OR {col} <= %s)",
                 (scheduled_timestamp, str(phone), now)
             )
             claimed = cur.rowcount > 0
@@ -1496,11 +1354,7 @@ def claim_interval_feature(phone, feature, scheduled_timestamp, now):
 def update_fishing_status_check_at(phone, timestamp):
     with get_db_cursor(commit=True) as cur:
         cur.execute(
-            """
-            UPDATE tg_accounts
-            SET fishing_status_check_at = %s
-            WHERE phone = %s
-            """,
+            "UPDATE tg_accounts SET fishing_status_check_at = %s WHERE phone = %s",
             (int(float(timestamp)), str(phone))
         )
 
@@ -1509,48 +1363,30 @@ def claim_fishing_status_check(phone, now):
     with get_db_cursor(commit=True) as cur:
         cur.execute(
             """
-            UPDATE tg_accounts
-            SET fishing_status_check_at = 0
-            WHERE phone = %s
-              AND fishing_status_check_at > 0
-              AND fishing_status_check_at <= %s
+            UPDATE tg_accounts SET fishing_status_check_at = 0
+            WHERE phone = %s AND fishing_status_check_at > 0 AND fishing_status_check_at <= %s
             """,
             (str(phone), int(float(now)))
         )
-        claimed = cur.rowcount > 0
-
-    return claimed
+        return cur.rowcount > 0
 
 
 def claim_fishing_periodic_check(phone, next_check_at, now):
     with get_db_cursor(commit=True) as cur:
         cur.execute(
             """
-            UPDATE tg_accounts
-            SET fishing_periodic_check_at = %s
-            WHERE phone = %s
-              AND (
-                  fishing_periodic_check_at IS NULL
-                  OR fishing_periodic_check_at <= %s
-              )
+            UPDATE tg_accounts SET fishing_periodic_check_at = %s
+            WHERE phone = %s AND (fishing_periodic_check_at IS NULL OR fishing_periodic_check_at <= %s)
             """,
             (int(float(next_check_at)), str(phone), int(float(now)))
         )
-        claimed = cur.rowcount > 0
-
-    return claimed
+        return cur.rowcount > 0
 
 
 def reset_fishing_checks(phone):
     with get_db_cursor(commit=True) as cur:
         cur.execute(
-            """
-            UPDATE tg_accounts
-            SET
-                fishing_status_check_at = 0,
-                fishing_periodic_check_at = 0
-            WHERE phone = %s
-            """,
+            "UPDATE tg_accounts SET fishing_status_check_at = 0, fishing_periodic_check_at = 0 WHERE phone = %s",
             (str(phone),)
         )
 
@@ -1574,11 +1410,7 @@ def get_command_template(key, default):
 def create_job(user_id, job_type, total_accounts):
     with get_db_cursor(commit=True) as cur:
         cur.execute(
-            """
-            INSERT INTO jobs (user_id, type, total_accounts)
-            VALUES (%s, %s, %s)
-            RETURNING id
-            """,
+            "INSERT INTO jobs (user_id, type, total_accounts) VALUES (%s, %s, %s) RETURNING id",
             (user_id, str(job_type), int(total_accounts))
         )
         row = cur.fetchone()
@@ -1588,51 +1420,31 @@ def create_job(user_id, job_type, total_accounts):
 def update_job_progress(job_id, processed=None, success=None, failed=None):
     if not job_id:
         return
-
     with get_db_cursor(commit=True) as cur:
         cur.execute(
             """
-            UPDATE jobs
-            SET
+            UPDATE jobs SET
                 processed_accounts = COALESCE(%s, processed_accounts),
                 success_count = COALESCE(%s, success_count),
                 failed_count = COALESCE(%s, failed_count)
             WHERE id = %s
             """,
-            (
-                processed if processed is not None else None,
-                success if success is not None else None,
-                failed if failed is not None else None,
-                job_id
-            )
+            (processed, success, failed, job_id)
         )
 
 
 def increment_job_processed(job_id, success=True):
     if not job_id:
         return
-
     with get_db_cursor(commit=True) as cur:
         if success:
             cur.execute(
-                """
-                UPDATE jobs
-                SET
-                    processed_accounts = processed_accounts + 1,
-                    success_count = success_count + 1
-                WHERE id = %s
-                """,
+                "UPDATE jobs SET processed_accounts = processed_accounts + 1, success_count = success_count + 1 WHERE id = %s",
                 (job_id,)
             )
         else:
             cur.execute(
-                """
-                UPDATE jobs
-                SET
-                    processed_accounts = processed_accounts + 1,
-                    failed_count = failed_count + 1
-                WHERE id = %s
-                """,
+                "UPDATE jobs SET processed_accounts = processed_accounts + 1, failed_count = failed_count + 1 WHERE id = %s",
                 (job_id,)
             )
 
@@ -1640,14 +1452,9 @@ def increment_job_processed(job_id, success=True):
 def finish_job(job_id, status='completed'):
     if not job_id:
         return
-
     with get_db_cursor(commit=True) as cur:
         cur.execute(
-            """
-            UPDATE jobs
-            SET status = %s, finished_at = CURRENT_TIMESTAMP
-            WHERE id = %s
-            """,
+            "UPDATE jobs SET status = %s, finished_at = CURRENT_TIMESTAMP WHERE id = %s",
             (str(status), job_id)
         )
 
@@ -1655,13 +1462,7 @@ def finish_job(job_id, status='completed'):
 def get_active_jobs_for_user(user_id):
     with get_db_cursor(dict_cursor=True) as cur:
         cur.execute(
-            """
-            SELECT *
-            FROM jobs
-            WHERE user_id = %s
-              AND status = 'running'
-            ORDER BY id DESC
-            """,
+            "SELECT * FROM jobs WHERE user_id = %s AND status = 'running' ORDER BY id DESC",
             (user_id,)
         )
         return [dict(row) for row in cur.fetchall()]
@@ -1670,13 +1471,7 @@ def get_active_jobs_for_user(user_id):
 def get_recent_jobs_for_user(user_id, limit=10):
     with get_db_cursor(dict_cursor=True) as cur:
         cur.execute(
-            """
-            SELECT *
-            FROM jobs
-            WHERE user_id = %s
-            ORDER BY id DESC
-            LIMIT %s
-            """,
+            "SELECT * FROM jobs WHERE user_id = %s ORDER BY id DESC LIMIT %s",
             (user_id, int(limit))
         )
         return [dict(row) for row in cur.fetchall()]
@@ -1684,9 +1479,215 @@ def get_recent_jobs_for_user(user_id, limit=10):
 
 def get_job_by_id(job_id):
     with get_db_cursor(dict_cursor=True) as cur:
-        cur.execute(
-            "SELECT * FROM jobs WHERE id = %s",
-            (job_id,)
-        )
+        cur.execute("SELECT * FROM jobs WHERE id = %s", (job_id,))
         row = cur.fetchone()
         return dict(row) if row else None
+
+
+# ============================================================
+# Heist helpers
+# ============================================================
+
+def get_heist_config(user_id):
+    with get_db_cursor(dict_cursor=True) as cur:
+        cur.execute("SELECT * FROM heist_config WHERE user_id = %s", (user_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def save_heist_config(user_id, config):
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            INSERT INTO heist_config (
+                user_id, chat_id, use_backup_group, selected_level,
+                auto_enabled, auto_level_mode, steal_count, move_count,
+                listen_timeout, heartbeat_enabled, auto_delay_min, auto_delay_max
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (user_id) DO UPDATE SET
+                chat_id = EXCLUDED.chat_id,
+                use_backup_group = EXCLUDED.use_backup_group,
+                selected_level = EXCLUDED.selected_level,
+                auto_enabled = EXCLUDED.auto_enabled,
+                auto_level_mode = EXCLUDED.auto_level_mode,
+                steal_count = EXCLUDED.steal_count,
+                move_count = EXCLUDED.move_count,
+                listen_timeout = EXCLUDED.listen_timeout,
+                heartbeat_enabled = EXCLUDED.heartbeat_enabled,
+                auto_delay_min = EXCLUDED.auto_delay_min,
+                auto_delay_max = EXCLUDED.auto_delay_max
+            """,
+            (
+                user_id,
+                config.get("chat_id", 0),
+                1 if config.get("use_backup_group") else 0,
+                config.get("selected_level", 1),
+                1 if config.get("auto_enabled") else 0,
+                config.get("auto_level_mode", "best_available"),
+                config.get("steal_count", 0),
+                config.get("move_count", 0),
+                config.get("listen_timeout", 600),
+                1 if config.get("heartbeat_enabled", True) else 0,
+                config.get("auto_delay_min", 5),
+                config.get("auto_delay_max", 15),
+            )
+        )
+
+
+def get_heist_accounts(user_id):
+    with get_db_cursor(dict_cursor=True) as cur:
+        cur.execute(
+            "SELECT * FROM heist_accounts WHERE user_id = %s ORDER BY position",
+            (user_id,)
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
+def save_heist_accounts(user_id, accounts):
+    with get_db_cursor(commit=True) as cur:
+        cur.execute("DELETE FROM heist_accounts WHERE user_id = %s", (user_id,))
+        for acc in accounts:
+            cur.execute(
+                "INSERT INTO heist_accounts (user_id, phone, position) VALUES (%s, %s, %s)",
+                (user_id, acc["phone"], acc["position"])
+            )
+
+
+def get_heist_state(user_id):
+    with get_db_cursor(dict_cursor=True) as cur:
+        cur.execute("SELECT * FROM heist_state WHERE user_id = %s", (user_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def update_heist_state(user_id, state=None, message_id=None, chat_id=None,
+                       level=None, steal_clicks_done=None, move_clicks_done=None,
+                       error_message=None):
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            "INSERT INTO heist_state (user_id) VALUES (%s) ON CONFLICT (user_id) DO NOTHING",
+            (user_id,)
+        )
+
+        updates = []
+        params = []
+
+        if state is not None:
+            updates.append("state = %s")
+            params.append(state)
+        if message_id is not None:
+            updates.append("message_id = %s")
+            params.append(message_id)
+        if chat_id is not None:
+            updates.append("chat_id = %s")
+            params.append(chat_id)
+        if level is not None:
+            updates.append("level = %s")
+            params.append(level)
+        if steal_clicks_done is not None:
+            updates.append("steal_clicks_done = %s")
+            params.append(steal_clicks_done)
+        if move_clicks_done is not None:
+            updates.append("move_clicks_done = %s")
+            params.append(move_clicks_done)
+        if error_message is not None:
+            updates.append("error_message = %s")
+            params.append(error_message)
+
+        if not updates:
+            return
+
+        updates.append("updated_at = %s")
+        params.append(int(time.time()))
+
+        if state == 'trigger_sent':
+            updates.append("started_at = %s")
+            params.append(int(time.time()))
+
+        params.append(user_id)
+
+        cur.execute(
+            f"UPDATE heist_state SET {', '.join(updates)} WHERE user_id = %s",
+            params
+        )
+
+
+def get_heist_cooldown(user_id, level):
+    with get_db_cursor(dict_cursor=True) as cur:
+        cur.execute(
+            "SELECT cooldown_until FROM heist_cooldowns WHERE user_id = %s AND level = %s",
+            (user_id, level)
+        )
+        row = cur.fetchone()
+        return int(row["cooldown_until"]) if row else 0
+
+
+def set_heist_cooldown(user_id, level, cooldown_until):
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            INSERT INTO heist_cooldowns (user_id, level, cooldown_until)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (user_id, level) DO UPDATE SET
+                cooldown_until = EXCLUDED.cooldown_until
+            """,
+            (user_id, level, int(cooldown_until))
+        )
+
+
+def create_heist_log(user_id, level, result, duration_seconds, accounts_used,
+                     started_at, finished_at):
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            INSERT INTO heist_logs (
+                user_id, level, result, duration_seconds,
+                accounts_used, started_at, finished_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                user_id, level, result, duration_seconds,
+                json.dumps(accounts_used), started_at, finished_at
+            )
+        )
+
+
+def get_heist_logs(user_id, limit=10):
+    with get_db_cursor(dict_cursor=True) as cur:
+        cur.execute(
+            "SELECT * FROM heist_logs WHERE user_id = %s ORDER BY id DESC LIMIT %s",
+            (user_id, limit)
+        )
+        rows = [dict(row) for row in cur.fetchall()]
+        for row in rows:
+            try:
+                row["accounts_used"] = json.loads(row["accounts_used"] or "[]")
+            except:
+                row["accounts_used"] = []
+        return rows
+
+
+def get_all_heist_cooldowns(user_id):
+    with get_db_cursor(dict_cursor=True) as cur:
+        cur.execute(
+            "SELECT level, cooldown_until FROM heist_cooldowns WHERE user_id = %s",
+            (user_id,)
+        )
+        result = {}
+        for row in cur.fetchall():
+            result[row["level"]] = int(row["cooldown_until"])
+        return result
+
+
+# ============================================================
+# Jail helpers
+# ============================================================
+
+def update_account_jail(phone, jail_until, reason=""):
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            "UPDATE tg_accounts SET jail_until = %s, jail_reason = %s WHERE phone = %s",
+            (int(jail_until), str(reason), str(phone))
+        )

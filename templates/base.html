@@ -1,10 +1,11 @@
 <!DOCTYPE html>
 <html lang="fa" dir="rtl" data-theme="dark">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Selfbot Panel{% endblock %}</title>
-    
+
     <!-- Tailwind + DaisyUI -->
     <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.10/dist/full.min.css" rel="stylesheet" type="text/css" />
     <script src="https://cdn.tailwindcss.com"></script>
@@ -22,7 +23,8 @@
     </script>
 
     <!-- Vazirmatn Font -->
-    <link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet" type="text/css" />
+    <link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet"
+        type="text/css" />
 
     <!-- Alpine.js -->
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/cdn.min.js"></script>
@@ -41,7 +43,9 @@
     <script src="https://cdn.jsdelivr.net/npm/apexcharts@4.3.0/dist/apexcharts.min.js"></script>
 
     <style>
-        body { font-family: 'Vazirmatn', Tahoma, sans-serif; }
+        body {
+            font-family: 'Vazirmatn', Tahoma, sans-serif;
+        }
 
         .glass-card {
             background: oklch(var(--b1) / 0.7);
@@ -49,10 +53,21 @@
             border: 1px solid oklch(var(--bc) / 0.06);
         }
 
-        .status-border-connected { border-right: 4px solid oklch(var(--su)); }
-        .status-border-error { border-right: 4px solid oklch(var(--er)); }
-        .status-border-stopped { border-right: 4px solid oklch(var(--bc) / 0.2); }
-        .status-border-flood { border-right: 4px solid oklch(var(--wa)); }
+        .status-border-connected {
+            border-right: 4px solid oklch(var(--su));
+        }
+
+        .status-border-error {
+            border-right: 4px solid oklch(var(--er));
+        }
+
+        .status-border-stopped {
+            border-right: 4px solid oklch(var(--bc) / 0.2);
+        }
+
+        .status-border-flood {
+            border-right: 4px solid oklch(var(--wa));
+        }
 
         .metric-box {
             background: oklch(var(--b2) / 0.5);
@@ -66,26 +81,45 @@
         }
 
         @keyframes slideInRight {
-            from { transform: translateX(100%); opacity: 0; }
-            to { transform: translateX(0); opacity: 1; }
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
         }
 
-        [x-cloak] { display: none !important; }
+        [x-cloak] {
+            display: none !important;
+        }
 
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: oklch(var(--bc) / 0.15); border-radius: 3px; }
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: oklch(var(--bc) / 0.15);
+            border-radius: 3px;
+        }
     </style>
 
     <script>
-        (function() {
-            const theme = localStorage.getItem('theme') || 'dark';
-            document.documentElement.setAttribute('data-theme', theme);
-            if (theme === 'dark') document.documentElement.classList.add('dark');
-            else document.documentElement.classList.remove('dark');
-        })();
+            (function () {
+                const theme = localStorage.getItem('theme') || 'dark';
+                document.documentElement.setAttribute('data-theme', theme);
+                if (theme === 'dark') document.documentElement.classList.add('dark');
+                else document.documentElement.classList.remove('dark');
+            })();
     </script>
 </head>
+
 <body class="min-h-screen bg-base-200 font-vazir transition-colors duration-200">
 
     <!-- Navbar -->
@@ -97,7 +131,7 @@
                     <span class="hidden sm:inline">Selfbot</span>
                 </a>
             </div>
-            
+
             <div class="flex-none gap-1">
                 <!-- Theme Toggle -->
                 <label class="swap swap-rotate btn btn-ghost btn-circle btn-sm">
@@ -117,15 +151,28 @@
                         <span class="hidden md:inline text-sm font-medium">{{ session.get('username') }}</span>
                         <i data-lucide="chevron-down" class="w-4 h-4 opacity-50"></i>
                     </div>
-                    <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow-2xl bg-base-200 rounded-box w-56 mt-2 border border-base-content/5">
+                    <ul tabindex="0"
+                        class="dropdown-content z-[1] menu p-2 shadow-2xl bg-base-200 rounded-box w-56 mt-2 border border-base-content/5">
+                        <li>
+                            <a href="{{ url_for('heist_panel') }}">
+                                <i data-lucide="swords" class="w-4 h-4"></i>
+                                سرقت میویی
+                            </a>
+                        </li>
                         {% if session.get('is_admin') %}
-                        <li><a href="{{ url_for('admin_automation') }}"><i data-lucide="sliders-horizontal" class="w-4 h-4"></i> Automation</a></li>
-                        <li><a href="{{ url_for('admin_users') }}"><i data-lucide="users" class="w-4 h-4"></i> Users</a></li>
-                        <li><a href="{{ url_for('admin_invites') }}"><i data-lucide="ticket" class="w-4 h-4"></i> کدهای دعوت</a></li>
-                        <li><a href="{{ url_for('admin_settings') }}"><i data-lucide="settings" class="w-4 h-4"></i> تنظیمات ادمین</a></li>
                         <div class="divider my-1"></div>
+                        <li><a href="{{ url_for('admin_automation') }}"><i data-lucide="sliders-horizontal"
+                                    class="w-4 h-4"></i> Automation</a></li>
+                        <li><a href="{{ url_for('admin_users') }}"><i data-lucide="users" class="w-4 h-4"></i> Users</a>
+                        </li>
+                        <li><a href="{{ url_for('admin_invites') }}"><i data-lucide="ticket" class="w-4 h-4"></i> کدهای
+                                دعوت</a></li>
+                        <li><a href="{{ url_for('admin_settings') }}"><i data-lucide="settings" class="w-4 h-4"></i>
+                                تنظیمات ادمین</a></li>
                         {% endif %}
-                        <li><a href="{{ url_for('logout') }}" class="text-error"><i data-lucide="log-out" class="w-4 h-4"></i> خروج</a></li>
+                        <div class="divider my-1"></div>
+                        <li><a href="{{ url_for('logout') }}" class="text-error"><i data-lucide="log-out"
+                                    class="w-4 h-4"></i> خروج</a></li>
                     </ul>
                 </div>
                 {% endif %}
@@ -140,7 +187,8 @@
             {% for category, message in messages %}
             <div role="alert"
                 class="alert shadow-lg toast-msg border-0 {{ 'alert-error' if category in ('error', 'danger') else 'alert-success' if category == 'success' else 'alert-warning' if category == 'warning' else 'alert-info' }}">
-                <i data-lucide="{{ 'alert-circle' if category in ('error', 'danger') else 'check-circle' if category == 'success' else 'alert-triangle' if category == 'warning' else 'info' }}" class="w-5 h-5 shrink-0"></i>
+                <i data-lucide="{{ 'alert-circle' if category in ('error', 'danger') else 'check-circle' if category == 'success' else 'alert-triangle' if category == 'warning' else 'info' }}"
+                    class="w-5 h-5 shrink-0"></i>
                 <span class="text-sm">{{ message }}</span>
                 <button type="button" class="btn btn-ghost btn-circle btn-xs" onclick="this.closest('.alert').remove()">
                     <i data-lucide="x" class="w-3 h-3"></i>
@@ -160,7 +208,7 @@
     </main>
 
     <script>
-        document.addEventListener('DOMContentLoaded', function() {
+        document.addEventListener('DOMContentLoaded', function () {
             lucide.createIcons();
             tippy('[data-tippy-content]', { animation: 'shift-away', theme: 'translucent' });
 
@@ -179,7 +227,7 @@
         const themeToggle = document.getElementById('theme-toggle');
         const currentTheme = localStorage.getItem('theme') || 'dark';
         if (currentTheme === 'dark') themeToggle.checked = true;
-        themeToggle.addEventListener('change', function() {
+        themeToggle.addEventListener('change', function () {
             if (this.checked) {
                 localStorage.setItem('theme', 'dark');
                 document.documentElement.setAttribute('data-theme', 'dark');
@@ -192,4 +240,5 @@
         });
     </script>
 </body>
+
 </html>
