@@ -827,6 +827,12 @@ def transfer():
 # Bulk actions
 # ============================================================
 
+@app.route("/jobs/active")
+@login_required
+def active_jobs():
+    jobs = get_active_jobs_for_user(session["user_id"])
+    return jsonify(jobs)
+
 @app.route("/bulk_start", methods=["POST"])
 @login_required
 def bulk_start():
