@@ -89,6 +89,9 @@ DEFAULT_SETTINGS = {
     "FISHING_COMMAND": "ماهی",
     "PROFILE_COMMAND": "میوهام",
     "TRANSFER_COMMAND_TEMPLATE": "انتقال میویی {amount} {target}",
+
+    # Heist
+    "HEIST_HEARTBEAT_LOG": "0",
 }
 
 
@@ -256,6 +259,69 @@ def init_db():
                 status TEXT DEFAULT '',
                 message TEXT DEFAULT '',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS heist_config (
+                user_id INTEGER PRIMARY KEY,
+                chat_id BIGINT DEFAULT 0,
+                use_backup_group INTEGER DEFAULT 0,
+                selected_level INTEGER DEFAULT 1,
+                auto_enabled INTEGER DEFAULT 0,
+                auto_level_mode TEXT DEFAULT 'best_available',
+                steal_count INTEGER DEFAULT 0,
+                move_count INTEGER DEFAULT 0,
+                listen_timeout INTEGER DEFAULT 600,
+                phase_timeout INTEGER DEFAULT 300,
+                heartbeat_log INTEGER DEFAULT 0
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS heist_accounts (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                phone TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                UNIQUE(user_id, position)
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS heist_cooldowns (
+                user_id INTEGER NOT NULL,
+                level INTEGER NOT NULL,
+                cooldown_until BIGINT DEFAULT 0,
+                PRIMARY KEY (user_id, level)
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS heist_state (
+                user_id INTEGER PRIMARY KEY,
+                state TEXT DEFAULT 'idle',
+                message_id BIGINT DEFAULT 0,
+                chat_id BIGINT DEFAULT 0,
+                level INTEGER DEFAULT 0,
+                steal_clicks_done INTEGER DEFAULT 0,
+                move_clicks_done INTEGER DEFAULT 0,
+                started_at TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                error_message TEXT DEFAULT ''
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS heist_logs (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                level INTEGER,
+                result TEXT,
+                duration_seconds INTEGER DEFAULT 0,
+                accounts_used TEXT DEFAULT '[]',
+                started_at TIMESTAMP,
+                finished_at TIMESTAMP
             )
         """)
 
@@ -500,6 +566,20 @@ def init_db():
                     WHERE table_name='tg_accounts' AND column_name='flood_wait_until'
                 ) THEN
                     ALTER TABLE tg_accounts ADD COLUMN flood_wait_until BIGINT DEFAULT 0;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='jail_until'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN jail_until BIGINT DEFAULT 0;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='tg_accounts' AND column_name='jail_reason'
+                ) THEN
+                    ALTER TABLE tg_accounts ADD COLUMN jail_reason TEXT DEFAULT '';
                 END IF;
             END $$;
         """)
@@ -1097,6 +1177,9 @@ def _row_to_account(row):
     # Compatibility alias
     acc["fish_enabled"] = acc["pishi_enabled"]
 
+    acc["jail_until"] = int(float(acc.get("jail_until") or 0))
+    acc["jail_reason"] = acc.get("jail_reason") or ""
+
     return acc
 
 
@@ -1690,3 +1773,362 @@ def get_job_by_id(job_id):
         )
         row = cur.fetchone()
         return dict(row) if row else None
+
+
+# ============================================================
+# Jail helpers
+# ============================================================
+
+def set_account_jail(phone, jail_until, jail_reason=""):
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            UPDATE tg_accounts
+            SET jail_until = %s, jail_reason = %s
+            WHERE phone = %s
+            """,
+            (int(jail_until), str(jail_reason or ""), str(phone))
+        )
+
+
+def clear_account_jail(phone):
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            UPDATE tg_accounts
+            SET jail_until = 0, jail_reason = ''
+            WHERE phone = %s
+            """,
+            (str(phone),)
+        )
+
+
+def is_account_jailed(phone):
+    with get_db_cursor(dict_cursor=True) as cur:
+        cur.execute(
+            "SELECT jail_until FROM tg_accounts WHERE phone = %s",
+            (str(phone),)
+        )
+        row = cur.fetchone()
+
+    if not row:
+        return False
+
+    return int(row.get("jail_until") or 0) > int(time.time())
+
+
+# ============================================================
+# Heist config
+# ============================================================
+
+def get_heist_config(user_id):
+    with get_db_cursor(dict_cursor=True) as cur:
+        cur.execute(
+            "SELECT * FROM heist_config WHERE user_id = %s",
+            (user_id,)
+        )
+        row = cur.fetchone()
+
+    if row:
+        return dict(row)
+
+    return {
+        "user_id": user_id,
+        "chat_id": 0,
+        "use_backup_group": 0,
+        "selected_level": 1,
+        "auto_enabled": 0,
+        "auto_level_mode": "best_available",
+        "steal_count": 0,
+        "move_count": 0,
+        "listen_timeout": 600,
+        "phase_timeout": 300,
+        "heartbeat_log": 0,
+    }
+
+
+def save_heist_config(user_id, config):
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            INSERT INTO heist_config (
+                user_id, chat_id, use_backup_group, selected_level,
+                auto_enabled, auto_level_mode, steal_count, move_count,
+                listen_timeout, phase_timeout, heartbeat_log
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (user_id) DO UPDATE SET
+                chat_id = EXCLUDED.chat_id,
+                use_backup_group = EXCLUDED.use_backup_group,
+                selected_level = EXCLUDED.selected_level,
+                auto_enabled = EXCLUDED.auto_enabled,
+                auto_level_mode = EXCLUDED.auto_level_mode,
+                steal_count = EXCLUDED.steal_count,
+                move_count = EXCLUDED.move_count,
+                listen_timeout = EXCLUDED.listen_timeout,
+                phase_timeout = EXCLUDED.phase_timeout,
+                heartbeat_log = EXCLUDED.heartbeat_log
+            """,
+            (
+                user_id,
+                int(config.get("chat_id", 0)),
+                int(config.get("use_backup_group", 0)),
+                int(config.get("selected_level", 1)),
+                int(config.get("auto_enabled", 0)),
+                str(config.get("auto_level_mode", "best_available")),
+                int(config.get("steal_count", 0)),
+                int(config.get("move_count", 0)),
+                int(config.get("listen_timeout", 600)),
+                int(config.get("phase_timeout", 300)),
+                int(config.get("heartbeat_log", 0)),
+            )
+        )
+
+
+# ============================================================
+# Heist accounts
+# ============================================================
+
+def get_heist_accounts(user_id):
+    with get_db_cursor(dict_cursor=True) as cur:
+        cur.execute(
+            """
+            SELECT * FROM heist_accounts
+            WHERE user_id = %s
+            ORDER BY position ASC
+            """,
+            (user_id,)
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
+def save_heist_accounts(user_id, accounts):
+    """
+    accounts: list of dicts with 'phone' and 'position' keys.
+    Replaces all existing assignments for this user.
+    """
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            "DELETE FROM heist_accounts WHERE user_id = %s",
+            (user_id,)
+        )
+
+        for acc in accounts:
+            cur.execute(
+                """
+                INSERT INTO heist_accounts (user_id, phone, position)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (user_id, position) DO UPDATE SET
+                    phone = EXCLUDED.phone
+                """,
+                (user_id, str(acc["phone"]), int(acc["position"]))
+            )
+
+
+def clear_heist_accounts(user_id):
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            "DELETE FROM heist_accounts WHERE user_id = %s",
+            (user_id,)
+        )
+
+
+# ============================================================
+# Heist cooldowns
+# ============================================================
+
+def get_heist_cooldown(user_id, level):
+    with get_db_cursor(dict_cursor=True) as cur:
+        cur.execute(
+            """
+            SELECT cooldown_until FROM heist_cooldowns
+            WHERE user_id = %s AND level = %s
+            """,
+            (user_id, int(level))
+        )
+        row = cur.fetchone()
+
+    if row:
+        return int(row.get("cooldown_until") or 0)
+
+    return 0
+
+
+def set_heist_cooldown(user_id, level, cooldown_until):
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            INSERT INTO heist_cooldowns (user_id, level, cooldown_until)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (user_id, level) DO UPDATE SET
+                cooldown_until = EXCLUDED.cooldown_until
+            """,
+            (user_id, int(level), int(cooldown_until))
+        )
+
+
+def get_all_heist_cooldowns(user_id):
+    with get_db_cursor(dict_cursor=True) as cur:
+        cur.execute(
+            """
+            SELECT level, cooldown_until FROM heist_cooldowns
+            WHERE user_id = %s
+            ORDER BY level ASC
+            """,
+            (user_id,)
+        )
+        return {row["level"]: int(row["cooldown_until"]) for row in cur.fetchall()}
+
+
+def clear_heist_cooldowns(user_id):
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            "DELETE FROM heist_cooldowns WHERE user_id = %s",
+            (user_id,)
+        )
+
+
+# ============================================================
+# Heist state
+# ============================================================
+
+def get_heist_state(user_id):
+    with get_db_cursor(dict_cursor=True) as cur:
+        cur.execute(
+            "SELECT * FROM heist_state WHERE user_id = %s",
+            (user_id,)
+        )
+        row = cur.fetchone()
+
+    if row:
+        return dict(row)
+
+    return {
+        "user_id": user_id,
+        "state": "idle",
+        "message_id": 0,
+        "chat_id": 0,
+        "level": 0,
+        "steal_clicks_done": 0,
+        "move_clicks_done": 0,
+        "started_at": None,
+        "updated_at": None,
+        "error_message": "",
+    }
+
+
+def set_heist_state(user_id, state, message_id=0, chat_id=0, level=0, error=""):
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            INSERT INTO heist_state (
+                user_id, state, message_id, chat_id, level,
+                steal_clicks_done, move_clicks_done,
+                started_at, updated_at, error_message
+            )
+            VALUES (%s, %s, %s, %s, %s, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, %s)
+            ON CONFLICT (user_id) DO UPDATE SET
+                state = EXCLUDED.state,
+                message_id = EXCLUDED.message_id,
+                chat_id = EXCLUDED.chat_id,
+                level = EXCLUDED.level,
+                steal_clicks_done = 0,
+                move_clicks_done = 0,
+                started_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP,
+                error_message = EXCLUDED.error_message
+            """,
+            (user_id, str(state), int(message_id), int(chat_id), int(level), str(error))
+        )
+
+
+def update_heist_state(user_id, **kwargs):
+    if not kwargs:
+        return
+
+    allowed = {
+        "state", "message_id", "chat_id", "level",
+        "steal_clicks_done", "move_clicks_done",
+        "error_message"
+    }
+
+    fields = []
+    values = []
+
+    for key, value in kwargs.items():
+        if key in allowed:
+            fields.append(f"{key} = %s")
+            values.append(value)
+
+    if not fields:
+        return
+
+    fields.append("updated_at = CURRENT_TIMESTAMP")
+    values.append(user_id)
+
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            f"UPDATE heist_state SET {', '.join(fields)} WHERE user_id = %s",
+            values
+        )
+
+
+def reset_heist_state(user_id):
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            INSERT INTO heist_state (user_id, state)
+            VALUES (%s, 'idle')
+            ON CONFLICT (user_id) DO UPDATE SET
+                state = 'idle',
+                message_id = 0,
+                chat_id = 0,
+                level = 0,
+                steal_clicks_done = 0,
+                move_clicks_done = 0,
+                error_message = '',
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (user_id,)
+        )
+
+
+# ============================================================
+# Heist logs
+# ============================================================
+
+def add_heist_log(user_id, level, result, duration_seconds, accounts_used):
+    with get_db_cursor(commit=True) as cur:
+        cur.execute(
+            """
+            INSERT INTO heist_logs (
+                user_id, level, result, duration_seconds,
+                accounts_used, started_at, finished_at
+            )
+            VALUES (%s, %s, %s, %s, %s,
+                    CURRENT_TIMESTAMP - (%s || ' seconds')::INTERVAL,
+                    CURRENT_TIMESTAMP)
+            """,
+            (
+                user_id,
+                int(level),
+                str(result),
+                int(duration_seconds),
+                json.dumps(accounts_used, ensure_ascii=False),
+                int(duration_seconds),
+            )
+        )
+
+
+def get_heist_logs(user_id, limit=10):
+    with get_db_cursor(dict_cursor=True) as cur:
+        cur.execute(
+            """
+            SELECT * FROM heist_logs
+            WHERE user_id = %s
+            ORDER BY id DESC
+            LIMIT %s
+            """,
+            (user_id, int(limit))
+        )
+        return [dict(row) for row in cur.fetchall()]

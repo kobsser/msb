@@ -1,0 +1,635 @@
+{% extends "base.html" %}
+{% block title %}Heist{% endblock %}
+{% block content %}
+
+<div x-data="heistPanel()" x-init="init()">
+
+    <!-- Header -->
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+        <div>
+            <h2 class="text-2xl font-bold tracking-tight flex items-center gap-2">
+                <i data-lucide="target" class="w-6 h-6 text-primary"></i>
+                سرقت میویی
+            </h2>
+            <p class="text-sm opacity-50 mt-1">Heist Panel</p>
+        </div>
+
+        <div class="flex items-center gap-3">
+            <!-- Auto mode toggle -->
+            <form method="POST" action="{{ url_for('toggle_heist_auto') }}">
+                <label class="cursor-pointer flex items-center gap-2">
+                    <span class="text-sm opacity-60">Auto</span>
+                    <input type="submit" class="hidden">
+                    <div class="indicator">
+                        <span class="indicator-item badge badge-xs {{ 'badge-success' if config.auto_enabled else 'badge-ghost' }} -right-1 -top-1"></span>
+                        <div class="w-10 h-5 rounded-full {{ 'bg-success' if config.auto_enabled else 'bg-base-300' }} flex items-center px-0.5 cursor-pointer"
+                             onclick="this.closest('form').submit()">
+                            <div class="w-4 h-4 rounded-full bg-white transition-transform {{ 'translate-x-5' if config.auto_enabled else '' }}"></div>
+                        </div>
+                    </div>
+                </label>
+            </form>
+
+            <a href="{{ url_for('dashboard') }}" class="btn btn-ghost btn-sm gap-1">
+                <i data-lucide="arrow-right" class="w-4 h-4"></i>
+            </a>
+        </div>
+    </div>
+
+    <!-- Status Card -->
+    <div class="glass-card rounded-2xl p-4 mb-6">
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl flex items-center justify-center"
+                     :class="stateColor">
+                    <i data-lucide="activity" class="w-5 h-5"></i>
+                </div>
+                <div>
+                    <div class="text-xs opacity-50">Status</div>
+                    <div class="text-sm font-bold" x-text="stateLabel"></div>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-info/10 flex items-center justify-center">
+                    <i data-lucide="layers" class="w-5 h-5 text-info"></i>
+                </div>
+                <div>
+                    <div class="text-xs opacity-50">Level</div>
+                    <div class="text-sm font-bold" x-text="heistLevel || '—'"></div>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-warning/10 flex items-center justify-center">
+                    <i data-lucide="timer" class="w-5 h-5 text-warning"></i>
+                </div>
+                <div>
+                    <div class="text-xs opacity-50">Cooldown</div>
+                    <div class="text-sm font-bold" x-text="cooldownLabel"></div>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl flex items-center justify-center"
+                     :class="anyJailed ? 'bg-error/10' : 'bg-success/10'">
+                    <i data-lucide="shield" class="w-5 h-5" :class="anyJailed ? 'text-error' : 'text-success'"></i>
+                </div>
+                <div>
+                    <div class="text-xs opacity-50">Jail</div>
+                    <div class="text-sm font-bold" x-text="jailLabel"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Progress Steps -->
+    <div class="glass-card rounded-2xl p-4 mb-6" x-show="isRunning || lastState !== 'idle'">
+        <div class="flex items-center justify-between overflow-x-auto gap-1">
+            <template x-for="(step, idx) in progressSteps" :key="idx">
+                <div class="flex flex-col items-center gap-1 min-w-[60px]">
+                    <div class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all duration-300"
+                         :class="{
+                             'bg-success text-success-content': step.status === 'done',
+                             'bg-primary text-primary-content animate-pulse': step.status === 'active',
+                             'bg-error text-error-content': step.status === 'error',
+                             'bg-base-300 text-base-content/30': step.status === 'pending'
+                         }">
+                        <span x-show="step.status === 'done'">✓</span>
+                        <span x-show="step.status === 'error'">✕</span>
+                        <span x-show="step.status === 'active'" x-text="idx + 1"></span>
+                        <span x-show="step.status === 'pending'" x-text="idx + 1"></span>
+                    </div>
+                    <span class="text-[10px] opacity-50 whitespace-nowrap" x-text="step.label"></span>
+                </div>
+            </template>
+        </div>
+
+        <!-- Steal/Move progress -->
+        <div x-show="stealClicks > 0 || moveClicks > 0" class="mt-3 flex gap-4 text-xs">
+            <span x-show="stealClicks > 0" class="opacity-60">
+                🏋️ Steal: <span class="font-bold" x-text="stealClicks"></span>
+            </span>
+            <span x-show="moveClicks > 0" class="opacity-60">
+                ⏰ Move: <span class="font-bold" x-text="moveClicks"></span>
+            </span>
+        </div>
+    </div>
+
+    <!-- Main Content Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+
+        <!-- Left: Configuration -->
+        <div class="glass-card rounded-2xl overflow-hidden">
+            <div class="p-4 border-b border-base-content/5">
+                <h3 class="font-bold text-sm flex items-center gap-2">
+                    <i data-lucide="settings" class="w-4 h-4 text-primary"></i>
+                    Configuration
+                </h3>
+            </div>
+
+            <form method="POST" action="{{ url_for('save_heist_config_route') }}" class="p-4 space-y-4">
+                <!-- Group Chat -->
+                <div class="form-control">
+                    <label class="label pb-1">
+                        <span class="label-text text-xs font-medium opacity-60">Group Chat</span>
+                    </label>
+
+                    <label class="cursor-pointer flex items-center gap-2 mb-2">
+                        <input type="checkbox" name="use_backup_group" class="checkbox checkbox-sm checkbox-primary"
+                            {{ 'checked' if config.use_backup_group }} 
+                            @change="useBackup = $event.target.checked">
+                        <span class="text-sm">Use backup group</span>
+                    </label>
+
+                    <div x-show="!useBackup">
+                        <select name="chat_id" class="select select-bordered select-sm w-full bg-base-200/50">
+                            <option value="0">Select a group...</option>
+                            <template x-for="g in sharedGroups" :key="g.id">
+                                <option :value="g.id" 
+                                        :selected="String(g.id) === String(configChatId)"
+                                        x-text="g.title + ' (' + g.members + ' members)'"></option>
+                            </template>
+                        </select>
+                        <button type="button" class="btn btn-ghost btn-xs mt-1 gap-1" @click="fetchSharedGroups()">
+                            <i data-lucide="refresh-cw" class="w-3 h-3"></i>
+                            Refresh shared groups
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Level -->
+                <div class="form-control">
+                    <label class="label pb-1">
+                        <span class="label-text text-xs font-medium opacity-60">Level</span>
+                    </label>
+                    <select name="selected_level" class="select select-bordered select-sm w-full bg-base-200/50">
+                        <option value="1" {{ 'selected' if config.selected_level == 1 }}>Level 1 (2h cooldown)</option>
+                        <option value="2" {{ 'selected' if config.selected_level == 2 }}>Level 2 (5h cooldown)</option>
+                        <option value="3" {{ 'selected' if config.selected_level == 3 }}>Level 3 (8h cooldown)</option>
+                    </select>
+                </div>
+
+                <!-- Auto Level Mode -->
+                <div class="form-control">
+                    <label class="label pb-1">
+                        <span class="label-text text-xs font-medium opacity-60">Auto Level Mode</span>
+                    </label>
+                    <select name="auto_level_mode" class="select select-bordered select-sm w-full bg-base-200/50">
+                        <option value="best_available" {{ 'selected' if config.auto_level_mode == 'best_available' }}>Best available (lowest first)</option>
+                        <option value="fixed" {{ 'selected' if config.auto_level_mode == 'fixed' }}>Fixed level only</option>
+                    </select>
+                </div>
+
+                <!-- Steal/Move counts -->
+                <div class="grid grid-cols-2 gap-3">
+                    <div class="form-control">
+                        <label class="label pb-1">
+                            <span class="label-text text-xs font-medium opacity-60">Steal Count</span>
+                        </label>
+                        <input type="number" name="steal_count" min="0" value="{{ config.steal_count }}"
+                            class="input input-bordered input-sm bg-base-200/50" data-tippy-content="0 = unlimited">
+                    </div>
+                    <div class="form-control">
+                        <label class="label pb-1">
+                            <span class="label-text text-xs font-medium opacity-60">Move Count</span>
+                        </label>
+                        <input type="number" name="move_count" min="0" value="{{ config.move_count }}"
+                            class="input input-bordered input-sm bg-base-200/50" data-tippy-content="0 = unlimited">
+                    </div>
+                </div>
+
+                <!-- Timeouts -->
+                <div class="grid grid-cols-2 gap-3">
+                    <div class="form-control">
+                        <label class="label pb-1">
+                            <span class="label-text text-xs font-medium opacity-60">Listen Timeout (s)</span>
+                        </label>
+                        <input type="number" name="listen_timeout" min="60" value="{{ config.listen_timeout }}"
+                            class="input input-bordered input-sm bg-base-200/50">
+                    </div>
+                    <div class="form-control">
+                        <label class="label pb-1">
+                            <span class="label-text text-xs font-medium opacity-60">Phase Timeout (s)</span>
+                        </label>
+                        <input type="number" name="phase_timeout" min="30" value="{{ config.phase_timeout }}"
+                            class="input input-bordered input-sm bg-base-200/50">
+                    </div>
+                </div>
+
+                <!-- Heartbeat -->
+                <label class="cursor-pointer flex items-center gap-2">
+                    <input type="checkbox" name="heartbeat_log" class="checkbox checkbox-sm"
+                        {{ 'checked' if config.heartbeat_log }}>
+                    <span class="text-sm opacity-60">Heartbeat log (every 30s)</span>
+                </label>
+
+                <button type="submit" class="btn btn-primary btn-sm w-full gap-1">
+                    <i data-lucide="save" class="w-3.5 h-3.5"></i>
+                    Save Settings
+                </button>
+            </form>
+        </div>
+
+        <!-- Right: Accounts -->
+        <div class="glass-card rounded-2xl overflow-hidden">
+            <div class="p-4 border-b border-base-content/5">
+                <h3 class="font-bold text-sm flex items-center gap-2">
+                    <i data-lucide="users" class="w-4 h-4 text-primary"></i>
+                    Accounts (4 required)
+                </h3>
+            </div>
+
+            <form method="POST" action="{{ url_for('save_heist_accounts_route') }}" class="p-4">
+                <div class="space-y-3">
+                    {% for pos in [1, 2, 3, 4] %}
+                    {% set existing = heist_accounts | selectattr('position', 'equalto', pos) | list %}
+                    {% set existing_phone = existing[0].phone if existing else '' %}
+                    <div class="flex items-center gap-3 p-3 rounded-xl bg-base-200/50">
+                        <div class="w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold shrink-0
+                                    {{ 'bg-primary/10 text-primary' if pos == 1 else 'bg-base-300' }}">
+                            {% if pos == 1 %}⭐{% else %}{{ pos }}{% endif %}
+                        </div>
+
+                        <div class="flex-1">
+                            <select name="account_phone[]" class="select select-bordered select-sm w-full bg-base-200/50">
+                                <option value="">Select account...</option>
+                                {% for acc in user_accounts %}
+                                <option value="{{ acc.phone }}" {{ 'selected' if acc.phone == existing_phone }}>
+                                    {{ acc.account_name or acc.phone }} ({{ acc.uid }})
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <input type="hidden" name="account_position[]" value="{{ pos }}">
+
+                        <div class="text-xs opacity-40 w-16 text-left shrink-0">
+                            {% if pos == 1 %}Open{% elif pos == 2 %}Steal{% elif pos == 3 %}Move{% else %}Run{% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-sm w-full mt-4 gap-1">
+                    <i data-lucide="save" class="w-3.5 h-3.5"></i>
+                    Save Accounts
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="glass-card rounded-2xl p-4 mb-6">
+        <div class="flex flex-col gap-4">
+            <div class="flex flex-wrap items-center gap-3">
+                <!-- Start Heist -->
+                <form method="POST" action="{{ url_for('start_heist') }}" id="start-heist-form">
+                    <button type="submit" class="btn btn-success btn-sm gap-2"
+                        :disabled="isRunning"
+                        :class="isRunning && 'opacity-50 cursor-not-allowed'">
+                        <i data-lucide="play" class="w-4 h-4"></i>
+                        Start Heist
+                    </button>
+                </form>
+
+                <!-- Custom settings toggle -->
+                <label class="cursor-pointer flex items-center gap-2">
+                    <input type="checkbox" class="checkbox checkbox-sm" x-model="showCustom">
+                    <span class="text-sm opacity-60">Custom settings for this run</span>
+                </label>
+
+                <!-- Abort -->
+                <form method="POST" action="{{ url_for('abort_heist') }}">
+                    <button type="submit" class="btn btn-error btn-outline btn-sm gap-1"
+                        :disabled="!isRunning"
+                        :class="!isRunning && 'opacity-50 cursor-not-allowed'">
+                        <i data-lucide="square" class="w-3.5 h-3.5"></i>
+                        Abort
+                    </button>
+                </form>
+
+                <!-- Check Cooldowns -->
+                <form method="POST" action="{{ url_for('check_heist_cooldowns') }}">
+                    <button type="submit" class="btn btn-ghost btn-sm gap-1" data-loading>
+                        <i data-lucide="search" class="w-3.5 h-3.5"></i>
+                        Check Cooldowns
+                    </button>
+                </form>
+            </div>
+
+            <!-- Custom settings panel -->
+            <div x-show="showCustom" x-collapse class="bg-base-200/50 rounded-xl p-4">
+                <div class="grid grid-cols-3 gap-3">
+                    <div class="form-control">
+                        <label class="label pb-1">
+                            <span class="label-text text-xs opacity-60">Level</span>
+                        </label>
+                        <select form="start-heist-form" name="custom_level" class="select select-bordered select-sm bg-base-200/50">
+                            <option value="1">Level 1</option>
+                            <option value="2">Level 2</option>
+                            <option value="3">Level 3</option>
+                        </select>
+                    </div>
+                    <div class="form-control">
+                        <label class="label pb-1">
+                            <span class="label-text text-xs opacity-60">Steal</span>
+                        </label>
+                        <input type="number" form="start-heist-form" name="custom_steal" min="0" value="0"
+                            class="input input-bordered input-sm bg-base-200/50">
+                    </div>
+                    <div class="form-control">
+                        <label class="label pb-1">
+                            <span class="label-text text-xs opacity-60">Move</span>
+                        </label>
+                        <input type="number" form="start-heist-form" name="custom_move" min="0" value="0"
+                            class="input input-bordered input-sm bg-base-200/50">
+                    </div>
+                </div>
+                <input type="hidden" form="start-heist-form" name="use_custom" value="on" x-show="showCustom">
+            </div>
+        </div>
+    </div>
+
+    <!-- Cooldown Display -->
+    <div class="glass-card rounded-2xl p-4 mb-6">
+        <h3 class="font-bold text-sm mb-3 flex items-center gap-2">
+            <i data-lucide="clock" class="w-4 h-4 text-warning"></i>
+            Cooldowns
+        </h3>
+        <div class="grid grid-cols-3 gap-3">
+            {% for lvl in [1, 2, 3] %}
+            {% set cd_until = cooldowns.get(lvl, 0) %}
+            <div class="text-center p-3 rounded-xl bg-base-200/50">
+                <div class="text-xs opacity-50 mb-1">Level {{ lvl }}</div>
+                {% if cd_until > 0 %}
+                <div class="text-sm font-bold countdown-cd text-warning" data-unix="{{ cd_until }}">--:--:--</div>
+                {% else %}
+                <div class="text-sm font-bold text-success">Available</div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- History -->
+    <div class="glass-card rounded-2xl overflow-hidden">
+        <div class="p-4 border-b border-base-content/5">
+            <h3 class="font-bold text-sm flex items-center gap-2">
+                <i data-lucide="history" class="w-4 h-4 text-primary"></i>
+                History
+            </h3>
+        </div>
+
+        <div class="p-4 overflow-x-auto">
+            <table class="table table-sm">
+                <thead>
+                    <tr class="text-xs opacity-50">
+                        <th>#</th>
+                        <th>Level</th>
+                        <th>Result</th>
+                        <th>Duration</th>
+                        <th>Time</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for log in heist_logs %}
+                    <tr class="hover:bg-base-200/50 transition-colors">
+                        <td class="text-xs opacity-40 font-mono">{{ log.id }}</td>
+                        <td>
+                            <span class="badge badge-ghost badge-sm">L{{ log.level }}</span>
+                        </td>
+                        <td>
+                            {% if log.result == 'won' %}
+                            <span class="badge badge-success badge-sm gap-1">🏆 Won</span>
+                            {% elif log.result == 'lost' %}
+                            <span class="badge badge-error badge-sm gap-1">💀 Lost</span>
+                            {% elif log.result == 'timeout' %}
+                            <span class="badge badge-warning badge-sm gap-1">⏰ Timeout</span>
+                            {% else %}
+                            <span class="badge badge-ghost badge-sm">{{ log.result }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-xs opacity-60">
+                            {{ (log.duration_seconds // 60) }}m {{ (log.duration_seconds % 60) }}s
+                        </td>
+                        <td class="text-xs opacity-40 whitespace-nowrap">{{ log.finished_at }}</td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="5" class="text-center opacity-40 py-6 text-sm">
+                            No heist history yet.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+</div>
+
+<script>
+    function heistPanel() {
+        return {
+            // SSE state
+            currentState: 'idle',
+            heistLevel: 0,
+            stealClicks: 0,
+            moveClicks: 0,
+            isRunning: false,
+            anyJailed: false,
+            jailUntil: 0,
+            cooldowns: {},
+            errorMessage: '',
+            lastState: 'idle',
+
+            // UI state
+            showCustom: false,
+            useBackup: {{ 'true' if config.use_backup_group else 'false' }},
+            configChatId: '{{ config.chat_id }}',
+            sharedGroups: [],
+
+            // Progress steps
+            progressSteps: [],
+
+            init() {
+                this.buildProgressSteps();
+                this.connectSSE();
+                this.fetchSharedGroups();
+                this.updateCooldownDisplay();
+                setInterval(() => this.updateCooldownDisplay(), 1000);
+            },
+
+            buildProgressSteps() {
+                const labels = ['Trigger', 'Loc', 'Level', 'Joins', 'Confirm', 'Open', 'Steal', 'Move', 'Run', 'Result'];
+                this.progressSteps = labels.map(l => ({ label: l, status: 'pending' }));
+            },
+
+            connectSSE() {
+                const source = new EventSource("{{ url_for('heist_stream') }}");
+
+                source.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        this.currentState = data.state || 'idle';
+                        this.heistLevel = data.level || 0;
+                        this.stealClicks = data.steal_clicks_done || 0;
+                        this.moveClicks = data.move_clicks_done || 0;
+                        this.isRunning = data.is_running || false;
+                        this.anyJailed = data.any_jailed || false;
+                        this.jailUntil = data.jail_until || 0;
+                        this.cooldowns = data.cooldowns || {};
+                        this.errorMessage = data.error_message || '';
+                        this.lastState = this.currentState;
+
+                        this.updateProgressSteps();
+                    } catch (e) {
+                        console.error('SSE parse error:', e);
+                    }
+                };
+
+                source.onerror = () => {
+                    // EventSource auto-reconnects
+                };
+            },
+
+            updateProgressSteps() {
+                const stateOrder = {
+                    'idle': -1,
+                    'trigger_sent': 0,
+                    'loc_selected': 1,
+                    'level_shown': 2,
+                    'level_selected': 2,
+                    'waiting_joins': 3,
+                    'all_joined': 3,
+                    'confirmed': 4,
+                    'phase_open': 5,
+                    'phase_steal': 6,
+                    'phase_move': 7,
+                    'phase_run': 8,
+                    'listening': 9,
+                    'won': 10,
+                    'lost': 10,
+                    'timeout': 10,
+                    'error': -2,
+                    'cooldown': -1,
+                };
+
+                const currentIdx = stateOrder[this.currentState] ?? -1;
+
+                this.progressSteps.forEach((step, idx) => {
+                    if (this.currentState === 'error') {
+                        step.status = idx <= Math.max(currentIdx, 0) ? 'error' : 'pending';
+                    } else if (idx < currentIdx) {
+                        step.status = 'done';
+                    } else if (idx === currentIdx) {
+                        step.status = 'active';
+                    } else {
+                        step.status = 'pending';
+                    }
+                });
+
+                // Special case for won/lost
+                if (this.currentState === 'won' || this.currentState === 'lost') {
+                    this.progressSteps.forEach(s => s.status = 'done');
+                    this.progressSteps[9].status = this.currentState === 'won' ? 'done' : 'error';
+                }
+            },
+
+            async fetchSharedGroups() {
+                try {
+                    const res = await fetch("{{ url_for('heist_shared_groups') }}");
+                    this.sharedGroups = await res.json();
+                } catch (e) {
+                    this.sharedGroups = [];
+                }
+            },
+
+            updateCooldownDisplay() {
+                const now = Math.floor(Date.now() / 1000);
+                document.querySelectorAll('.countdown-cd').forEach(el => {
+                    const unix = parseInt(el.dataset.unix || '0');
+                    const diff = unix - now;
+
+                    if (diff <= 0) {
+                        el.textContent = 'Available';
+                        el.className = 'text-sm font-bold countdown-cd text-success';
+                    } else {
+                        const h = Math.floor(diff / 3600);
+                        const m = Math.floor((diff % 3600) / 60);
+                        const s = diff % 60;
+                        el.textContent = `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+                    }
+                });
+            },
+
+            get stateColor() {
+                const map = {
+                    'idle': 'bg-base-300',
+                    'won': 'bg-success/10',
+                    'lost': 'bg-error/10',
+                    'error': 'bg-error/10',
+                    'timeout': 'bg-warning/10',
+                };
+                return map[this.currentState] || 'bg-primary/10';
+            },
+
+            get stateLabel() {
+                const map = {
+                    'idle': 'Idle',
+                    'trigger_sent': 'Sending trigger...',
+                    'loc_selected': 'Selecting location...',
+                    'level_shown': 'Choosing level...',
+                    'level_selected': 'Level selected',
+                    'waiting_joins': 'Waiting for joins...',
+                    'all_joined': 'All joined',
+                    'confirmed': 'Confirmed',
+                    'phase_open': 'Opening...',
+                    'phase_steal': 'Stealing...',
+                    'phase_move': 'Moving...',
+                    'phase_run': 'Running...',
+                    'listening': 'Waiting for result...',
+                    'won': '🏆 Won!',
+                    'lost': '💀 Lost',
+                    'timeout': '⏰ Timeout',
+                    'error': '❌ Error',
+                    'cooldown': 'Cooldown',
+                };
+                return map[this.currentState] || this.currentState;
+            },
+
+            get cooldownLabel() {
+                const now = Math.floor(Date.now() / 1000);
+                let minRemaining = Infinity;
+
+                for (const [lvl, until] of Object.entries(this.cooldowns)) {
+                    const remaining = until - now;
+                    if (remaining > 0 && remaining < minRemaining) {
+                        minRemaining = remaining;
+                    }
+                }
+
+                if (minRemaining === Infinity) return 'Clear';
+
+                const h = Math.floor(minRemaining / 3600);
+                const m = Math.floor((minRemaining % 3600) / 60);
+                return `${h}h ${m}m`;
+            },
+
+            get jailLabel() {
+                if (!this.anyJailed) return 'None';
+
+                const now = Math.floor(Date.now() / 1000);
+                const remaining = this.jailUntil - now;
+
+                if (remaining <= 0) return 'None';
+
+                const h = Math.floor(remaining / 3600);
+                const m = Math.floor((remaining % 3600) / 60);
+                return `${h}h ${m}m left`;
+            },
+        }
+    }
+</script>
+{% endblock %}

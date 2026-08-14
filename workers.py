@@ -40,6 +40,7 @@ from database import (
 
 import session_manager
 import optimizations
+import heist
 
 
 # ============================================================
@@ -1179,6 +1180,16 @@ async def handle_bot_message(client, phone: str, message):
         if not user or not user.get("is_active"):
             return
 
+        # Skip messages that belong to an active heist
+        heist_msg_id = heist.HEIST_ACTIVE_MESSAGES.get((phone, message.chat.id))
+        if heist_msg_id and message.id == heist_msg_id:
+            return
+
+        # Also skip if this chat is being used for heist and message is a reply to heist trigger
+        if (phone, message.chat.id) in heist.HEIST_TRACKED_MESSAGES:
+            if getattr(message, "reply_to_message_id", None):
+                return
+
         # ============================================================
         # Rescue cat handler
         # ============================================================
@@ -1400,6 +1411,11 @@ async def smart_scheduler_loop(client, phone: str):
                 pass
 
             now = int(time.time())
+
+            # Jail gate — skip all features if account is jailed
+            if int(account.get("jail_until") or 0) > now:
+                await asyncio.sleep(15)
+                continue
 
             # Global master kill switch
             if not global_feature_enabled("automation"):
@@ -2245,6 +2261,10 @@ async def _start_all_active_delayed(delay=None):
         if index < len(active_accounts) - 1:
             await asyncio.sleep(interval)
 
+    # Start heist auto loops after all workers are up
+    await asyncio.sleep(5)
+    await _start_heist_auto_loops()
+
 
 def start_all_active(loop=None, delay=None):
     _schedule_coroutine(_start_all_active_delayed(delay), loop)
@@ -2256,6 +2276,40 @@ async def _stop_all_workers():
             await _stop_worker(phone)
         except Exception as e:
             print(f"❌ stop_all_workers error: {e}")
+
+
+async def _start_heist_auto_loops():
+    """
+    Starts heist auto loops for users who have auto_enabled.
+    Called once during startup.
+    """
+    try:
+        accounts = get_all_tg_accounts()
+        user_ids = set()
+
+        for acc in accounts:
+            if acc.get("is_active"):
+                user_ids.add(acc.get("owner_id"))
+
+        for user_id in user_ids:
+            if not user_id:
+                continue
+
+            try:
+                from database import get_heist_config
+                config = get_heist_config(user_id)
+
+                if config.get("auto_enabled"):
+                    asyncio.create_task(
+                        heist.heist_auto_loop(user_id)
+                    )
+                    print(f"🎯 Heist auto loop started for user {user_id}")
+
+            except Exception as e:
+                print(f"❌ heist auto loop start error for user {user_id}: {e}")
+
+    except Exception as e:
+        print(f"❌ _start_heist_auto_loops error: {e}")
 
 
 async def _shutdown_sequence():

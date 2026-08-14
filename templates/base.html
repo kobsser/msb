@@ -118,14 +118,48 @@
                         <i data-lucide="chevron-down" class="w-4 h-4 opacity-50"></i>
                     </div>
                     <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow-2xl bg-base-200 rounded-box w-56 mt-2 border border-base-content/5">
+                        <li>
+                            <a href="{{ url_for('heist_panel') }}">
+                                <i data-lucide="target" class="w-4 h-4"></i>
+                                Heist
+                            </a>
+                        </li>
+
                         {% if session.get('is_admin') %}
-                        <li><a href="{{ url_for('admin_automation') }}"><i data-lucide="sliders-horizontal" class="w-4 h-4"></i> Automation</a></li>
-                        <li><a href="{{ url_for('admin_users') }}"><i data-lucide="users" class="w-4 h-4"></i> Users</a></li>
-                        <li><a href="{{ url_for('admin_invites') }}"><i data-lucide="ticket" class="w-4 h-4"></i> کدهای دعوت</a></li>
-                        <li><a href="{{ url_for('admin_settings') }}"><i data-lucide="settings" class="w-4 h-4"></i> تنظیمات ادمین</a></li>
                         <div class="divider my-1"></div>
+                        <li>
+                            <a href="{{ url_for('admin_automation') }}">
+                                <i data-lucide="sliders-horizontal" class="w-4 h-4"></i>
+                                Automation
+                            </a>
+                        </li>
+                        <li>
+                            <a href="{{ url_for('admin_users') }}">
+                                <i data-lucide="users" class="w-4 h-4"></i>
+                                Users
+                            </a>
+                        </li>
+                        <li>
+                            <a href="{{ url_for('admin_invites') }}">
+                                <i data-lucide="ticket" class="w-4 h-4"></i>
+                                کدهای دعوت
+                            </a>
+                        </li>
+                        <li>
+                            <a href="{{ url_for('admin_settings') }}">
+                                <i data-lucide="settings" class="w-4 h-4"></i>
+                                تنظیمات ادمین
+                            </a>
+                        </li>
                         {% endif %}
-                        <li><a href="{{ url_for('logout') }}" class="text-error"><i data-lucide="log-out" class="w-4 h-4"></i> خروج</a></li>
+
+                        <div class="divider my-1"></div>
+                        <li>
+                            <a href="{{ url_for('logout') }}" class="text-error">
+                                <i data-lucide="log-out" class="w-4 h-4"></i>
+                                خروج
+                            </a>
+                        </li>
                     </ul>
                 </div>
                 {% endif %}

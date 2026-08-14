@@ -16,7 +16,8 @@ from flask import (
     url_for,
     flash,
     session,
-    jsonify
+    jsonify,
+    Response,
 )
 
 from config import SECRET_KEY
@@ -52,6 +53,14 @@ from database import (
     get_recent_jobs_for_user,
     get_job_by_id,
     get_command_template,
+    get_heist_config,
+    save_heist_config,
+    get_heist_accounts,
+    save_heist_accounts,
+    get_heist_state,
+    reset_heist_state,
+    get_all_heist_cooldowns,
+    get_heist_logs,
 )
 
 from clients import (
@@ -63,6 +72,7 @@ from clients import (
 import workers
 import session_manager
 import optimizations
+import heist
 
 
 # ============================================================
@@ -1228,6 +1238,388 @@ def toggle_user_disabled(user_id):
         flash(f"کاربر {user['username']} فعال شد", "success")
 
     return redirect(url_for("admin_users"))
+
+
+# ============================================================
+# Heist panel
+# ============================================================
+
+@app.route("/heist")
+@login_required
+def heist_panel():
+    config = get_heist_config(session["user_id"])
+    accounts = get_heist_accounts(session["user_id"])
+    state = get_heist_state(session["user_id"])
+    cooldowns = get_all_heist_cooldowns(session["user_id"])
+    logs = get_heist_logs(session["user_id"], limit=10)
+    user_accounts = get_tg_accounts_for_user(session["user_id"])
+
+    return render_template(
+        "heist.html",
+        config=config,
+        heist_accounts=accounts,
+        heist_state=state,
+        cooldowns=cooldowns,
+        heist_logs=logs,
+        user_accounts=user_accounts,
+    )
+
+
+# ============================================================
+# Heist config
+# ============================================================
+
+@app.route("/heist/config/save", methods=["POST"])
+@login_required
+def save_heist_config_route():
+    chat_id = request.form.get("chat_id", "0").strip()
+    use_backup = request.form.get("use_backup_group") == "on"
+    level = request.form.get("selected_level", "1").strip()
+    auto_enabled = request.form.get("auto_enabled") == "on"
+    auto_mode = request.form.get("auto_level_mode", "best_available").strip()
+    steal_count = request.form.get("steal_count", "0").strip()
+    move_count = request.form.get("move_count", "0").strip()
+    listen_timeout = request.form.get("listen_timeout", "600").strip()
+    phase_timeout = request.form.get("phase_timeout", "300").strip()
+    heartbeat = request.form.get("heartbeat_log") == "on"
+
+    try:
+        chat_id = int(chat_id) if chat_id else 0
+    except ValueError:
+        chat_id = 0
+
+    try:
+        level = int(level)
+        if level not in (1, 2, 3):
+            level = 1
+    except ValueError:
+        level = 1
+
+    try:
+        steal_count = max(0, int(steal_count))
+    except ValueError:
+        steal_count = 0
+
+    try:
+        move_count = max(0, int(move_count))
+    except ValueError:
+        move_count = 0
+
+    try:
+        listen_timeout = max(60, int(listen_timeout))
+    except ValueError:
+        listen_timeout = 600
+
+    try:
+        phase_timeout = max(30, int(phase_timeout))
+    except ValueError:
+        phase_timeout = 300
+
+    if auto_mode not in ("best_available", "fixed"):
+        auto_mode = "best_available"
+
+    save_heist_config(session["user_id"], {
+        "chat_id": chat_id,
+        "use_backup_group": 1 if use_backup else 0,
+        "selected_level": level,
+        "auto_enabled": 1 if auto_enabled else 0,
+        "auto_level_mode": auto_mode,
+        "steal_count": steal_count,
+        "move_count": move_count,
+        "listen_timeout": listen_timeout,
+        "phase_timeout": phase_timeout,
+        "heartbeat_log": 1 if heartbeat else 0,
+    })
+
+    flash("Heist settings saved", "success")
+    return redirect(url_for("heist_panel"))
+
+
+# ============================================================
+# Heist accounts
+# ============================================================
+
+@app.route("/heist/accounts/save", methods=["POST"])
+@login_required
+def save_heist_accounts_route():
+    phones = request.form.getlist("account_phone[]")
+    positions = request.form.getlist("account_position[]")
+
+    accounts = []
+    for i in range(len(phones)):
+        if i < len(positions):
+            try:
+                pos = int(positions[i])
+            except ValueError:
+                pos = i + 1
+
+            accounts.append({
+                "phone": phones[i],
+                "position": pos,
+            })
+
+    # Validate exactly 4 accounts
+    if len(accounts) != 4:
+        flash("Exactly 4 accounts are required", "danger")
+        return redirect(url_for("heist_panel"))
+
+    # Validate positions are 1-4
+    positions_set = {a["position"] for a in accounts}
+    if positions_set != {1, 2, 3, 4}:
+        flash("Account positions must be 1, 2, 3, 4", "danger")
+        return redirect(url_for("heist_panel"))
+
+    # Validate all phones belong to this user
+    user_accounts = get_tg_accounts_for_user(session["user_id"])
+    user_phones = {a["phone"] for a in user_accounts}
+
+    for acc in accounts:
+        if acc["phone"] not in user_phones:
+            flash("One or more accounts do not belong to you", "danger")
+            return redirect(url_for("heist_panel"))
+
+    save_heist_accounts(session["user_id"], accounts)
+
+    flash("Heist accounts saved", "success")
+    return redirect(url_for("heist_panel"))
+
+
+# ============================================================
+# Heist start / abort
+# ============================================================
+
+@app.route("/heist/start", methods=["POST"])
+@login_required
+def start_heist():
+    if heist.is_heist_running(session["user_id"]):
+        flash("A heist is already running", "warning")
+        return redirect(url_for("heist_panel"))
+
+    # Check for per-run overrides
+    use_custom = request.form.get("use_custom") == "on"
+    level = None
+    steal_count = None
+    move_count = None
+
+    if use_custom:
+        try:
+            level = int(request.form.get("custom_level", "1"))
+            if level not in (1, 2, 3):
+                level = None
+        except ValueError:
+            level = None
+
+        try:
+            steal_count = max(0, int(request.form.get("custom_steal", "0")))
+        except ValueError:
+            steal_count = None
+
+        try:
+            move_count = max(0, int(request.form.get("custom_move", "0")))
+        except ValueError:
+            move_count = None
+
+    # Run heist in background
+    async def run():
+        orch = heist.get_orchestrator(session["user_id"])
+        await orch.start(level=level, steal_count=steal_count, move_count=move_count)
+
+    try:
+        future = asyncio.run_coroutine_threadsafe(run(), LOOP)
+        # Don't wait for completion — heist runs in background
+        flash("Heist starting...", "success")
+    except Exception as e:
+        flash(f"Heist start error: {e}", "danger")
+
+    return redirect(url_for("heist_panel"))
+
+
+@app.route("/heist/abort", methods=["POST"])
+@login_required
+def abort_heist():
+    orch = heist.get_orchestrator(session["user_id"])
+
+    if orch.is_running():
+        asyncio.run_coroutine_threadsafe(orch.abort(), LOOP)
+        flash("Heist abort requested", "warning")
+    else:
+        flash("No heist is running", "info")
+
+    return redirect(url_for("heist_panel"))
+
+
+# ============================================================
+# Heist cooldown check
+# ============================================================
+
+@app.route("/heist/check_cooldowns", methods=["POST"])
+@login_required
+def check_heist_cooldowns():
+    async def run():
+        orch = heist.get_orchestrator(session["user_id"])
+        return await orch.check_cooldowns()
+
+    try:
+        future = asyncio.run_coroutine_threadsafe(run(), LOOP)
+        result = future.result(timeout=60)
+
+        if result:
+            parts = []
+            for lvl, seconds in sorted(result.items()):
+                if seconds > 0:
+                    h = seconds // 3600
+                    m = (seconds % 3600) // 60
+                    parts.append(f"Level {lvl}: {h}h {m}m remaining")
+                else:
+                    parts.append(f"Level {lvl}: Available")
+
+            flash("Cooldowns: " + " | ".join(parts), "info")
+        else:
+            flash("Could not check cooldowns", "warning")
+
+    except Exception as e:
+        flash(f"Cooldown check error: {e}", "danger")
+
+    return redirect(url_for("heist_panel"))
+
+
+# ============================================================
+# Heist SSE stream
+# ============================================================
+
+@app.route("/heist/stream")
+@login_required
+def heist_stream():
+    user_id = session["user_id"]
+
+    def generate():
+        import json
+        import time as _time
+
+        while True:
+            try:
+                state = get_heist_state(user_id)
+                config = get_heist_config(user_id)
+                accounts = get_heist_accounts(user_id)
+                cooldowns = get_all_heist_cooldowns(user_id)
+
+                # Build account UIDs list
+                account_uids = []
+                for acc in accounts:
+                    tg_acc = get_tg_account(acc["phone"])
+                    if tg_acc:
+                        account_uids.append(tg_acc.get("uid", ""))
+
+                # Check if any account is jailed
+                any_jailed = False
+                jail_until = 0
+                for acc in accounts:
+                    tg_acc = get_tg_account(acc["phone"])
+                    if tg_acc and int(tg_acc.get("jail_until") or 0) > int(_time.time()):
+                        any_jailed = True
+                        jail_until = max(jail_until, int(tg_acc.get("jail_until") or 0))
+
+                payload = {
+                    "state": state.get("state", "idle"),
+                    "message_id": state.get("message_id", 0),
+                    "chat_id": state.get("chat_id", 0),
+                    "level": state.get("level", 0),
+                    "steal_clicks_done": state.get("steal_clicks_done", 0),
+                    "move_clicks_done": state.get("move_clicks_done", 0),
+                    "error_message": state.get("error_message", ""),
+                    "accounts": account_uids,
+                    "starter_uid": account_uids[0] if account_uids else "",
+                    "cooldowns": cooldowns,
+                    "any_jailed": any_jailed,
+                    "jail_until": jail_until,
+                    "is_running": heist.is_heist_running(user_id),
+                }
+
+                yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+            except Exception as e:
+                yield f"data: {{}}\n\n"
+
+            _time.sleep(2)
+
+    return Response(
+        generate(),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
+
+
+# ============================================================
+# Heist shared groups
+# ============================================================
+
+@app.route("/heist/shared_groups")
+@login_required
+def heist_shared_groups():
+    accounts = get_heist_accounts(session["user_id"])
+
+    if len(accounts) != 4:
+        return jsonify([])
+
+    # Get cached_groups for each account
+    group_sets = []
+
+    for acc in accounts:
+        tg_acc = get_tg_account(acc["phone"])
+        if not tg_acc:
+            return jsonify([])
+
+        groups = tg_acc.get("cached_groups", [])
+        group_ids = {str(g["id"]) for g in groups if g.get("id")}
+        group_sets.append(group_ids)
+
+    if not group_sets:
+        return jsonify([])
+
+    # Intersection of all group sets
+    shared = group_sets[0]
+    for gs in group_sets[1:]:
+        shared = shared.intersection(gs)
+
+    # Build response with group details
+    result = []
+    first_acc = get_tg_account(accounts[0]["phone"])
+
+    if first_acc:
+        for g in first_acc.get("cached_groups", []):
+            if str(g.get("id")) in shared:
+                result.append({
+                    "id": str(g["id"]),
+                    "title": g.get("title", "Unknown"),
+                    "members": g.get("members", 0),
+                })
+
+    return jsonify(result)
+
+
+# ============================================================
+# Heist auto loop management
+# ============================================================
+
+@app.route("/heist/toggle_auto", methods=["POST"])
+@login_required
+def toggle_heist_auto():
+    config = get_heist_config(session["user_id"])
+    new_state = not bool(config.get("auto_enabled"))
+
+    config["auto_enabled"] = 1 if new_state else 0
+    save_heist_config(session["user_id"], config)
+
+    if new_state:
+        flash("Heist auto mode enabled", "success")
+    else:
+        flash("Heist auto mode disabled", "info")
+
+    return redirect(url_for("heist_panel"))
 
 
 # ============================================================
