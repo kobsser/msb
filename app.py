@@ -1391,11 +1391,13 @@ def save_heist_accounts_route():
 @app.route("/heist/start", methods=["POST"])
 @login_required
 def start_heist():
-    if heist.is_heist_running(session["user_id"]):
+    # Capture user_id BEFORE the coroutine (session won't be available later)
+    user_id = session["user_id"]
+
+    if heist.is_heist_running(user_id):
         flash("A heist is already running", "warning")
         return redirect(url_for("heist_panel"))
 
-    # Check for per-run overrides
     use_custom = request.form.get("use_custom") == "on"
     level = None
     steal_count = None
@@ -1419,14 +1421,34 @@ def start_heist():
         except ValueError:
             move_count = None
 
-    # Run heist in background
     async def run():
-        orch = heist.get_orchestrator(session["user_id"])
-        await orch.start(level=level, steal_count=steal_count, move_count=move_count)
+        try:
+            orch = heist.get_orchestrator(user_id)
+            await orch.start(level=level, steal_count=steal_count, move_count=move_count)
+        except Exception as e:
+            import traceback
+            print(f"❌ Heist orchestrator crashed: {e}")
+            traceback.print_exc()
+            try:
+                from database import set_heist_state
+                set_heist_state(user_id, "error", error=str(e))
+            except Exception:
+                pass
 
     try:
         future = asyncio.run_coroutine_threadsafe(run(), LOOP)
-        # Don't wait for completion — heist runs in background
+
+        # Log any exception from the future
+        def _on_done(f):
+            try:
+                exc = f.exception()
+                if exc:
+                    print(f"❌ Heist future exception: {exc}")
+            except Exception:
+                pass
+
+        future.add_done_callback(_on_done)
+
         flash("Heist starting...", "success")
     except Exception as e:
         flash(f"Heist start error: {e}", "danger")

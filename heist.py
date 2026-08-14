@@ -3,9 +3,7 @@ import time
 import asyncio
 import random
 
-from pyrogram import filters
 from pyrogram.errors import FloodWait
-from pyrogram.handlers import EditedMessageHandler
 
 from config import BOT_USER_ID
 
@@ -245,12 +243,11 @@ class HeistOrchestrator:
         self._running = False
         self._abort_requested = False
         self._starter_client = None
-        self._edit_handler = None
         self._cached_message = None
-        self._edit_event = asyncio.Event()
         self._message_id = 0
         self._chat_id = 0
         self._start_time = 0
+        self._heist_phones = []
 
     # ----------------------------------------------------------
     # Public API
@@ -293,7 +290,6 @@ class HeistOrchestrator:
         self._abort_requested = False
         self._start_time = int(time.time())
         self._cached_message = None
-        self._edit_event.clear()
 
         phones = [a["phone"] for a in accounts]
 
@@ -330,9 +326,6 @@ class HeistOrchestrator:
                     except Exception:
                         pass
                     self._starter_client = None
-
-                # Unregister edit handler
-                self._unregister_edit_handler()
 
         except Exception as e:
             print(f"❌ Heist orchestrator error: {e}")
@@ -555,18 +548,19 @@ class HeistOrchestrator:
 
         self._message_id = reply.id
         self._cached_message = reply
-        for p in getattr(self, '_heist_phones', []):
-            HEIST_ACTIVE_MESSAGES[(p, chat_id)] = reply.id
         update_heist_state(self.user_id, message_id=reply.id, chat_id=chat_id)
 
-        # Register edit handler
-        self._register_edit_handler(chat_id, reply.id)
+        # Track heist message
+        for p in getattr(self, '_heist_phones', []):
+            HEIST_ACTIVE_MESSAGES[(p, chat_id)] = reply.id
 
         add_account_log(
             starter_phone, "heist", "trigger_sent", "success",
             f"Heist triggered in chat {chat_id}",
             account_uid=get_tg_account(starter_phone).get("uid", "")
         )
+
+        print(f"🎯 Bot reply received: message_id={reply.id}")
 
     async def _phase_select_loc(self):
         update_heist_state(self.user_id, state="loc_selected")
@@ -987,61 +981,82 @@ class HeistOrchestrator:
             return {}
 
     # ----------------------------------------------------------
-    # Message cache / edit handler
+    # Message cache / edit handler  →  REPLACE THIS ENTIRE SECTION
     # ----------------------------------------------------------
 
     def _register_edit_handler(self, chat_id, message_id):
-        if not self._starter_client:
-            return
-
-        async def _on_edit(_, edited_message):
-            try:
-                if edited_message.id == message_id and edited_message.chat.id == chat_id:
-                    self._cached_message = edited_message
-                    self._edit_event.set()
-            except Exception:
-                pass
-
-        self._edit_handler = EditedMessageHandler(
-            _on_edit,
-            filters.chat(chat_id) & filters.user(BOT_USER_ID)
-        )
-
-        self._starter_client.add_handler(self._edit_handler, group=-20)
+        # No longer needed — polling replaces the handler
+        pass
 
     def _unregister_edit_handler(self):
-        if self._starter_client and self._edit_handler:
-            try:
-                self._starter_client.remove_handler(self._edit_handler, group=-20)
-            except Exception:
-                pass
-            self._edit_handler = None
+        # No longer needed
+        pass
 
     async def _get_current_message(self):
-        """Get the current message from cache or fetch."""
-        if self._cached_message:
-            return self._cached_message
-
+        """Always re-fetch the message to get the latest state."""
         if self._starter_client and self._message_id:
             try:
                 msg = await self._starter_client.get_messages(
                     self._chat_id, self._message_id
                 )
-                self._cached_message = msg
-                return msg
+                if msg:
+                    self._cached_message = msg
+                    return msg
+            except Exception as e:
+                print(f"⚠️ Failed to fetch heist message: {e}")
+
+        return self._cached_message
+
+    async def _wait_for_edit(self, timeout=15):
+        """
+        Wait for the message to be edited by polling.
+        Detects changes by comparing button count and text.
+        """
+        initial_buttons = self._count_buttons(self._cached_message)
+        initial_text = ""
+        if self._cached_message:
+            initial_text = self._cached_message.text or self._cached_message.caption or ""
+
+        deadline = time.time() + timeout
+
+        while time.time() < deadline:
+            if self._abort_requested:
+                return
+
+            try:
+                msg = await self._starter_client.get_messages(
+                    self._chat_id, self._message_id
+                )
+
+                if msg:
+                    current_buttons = self._count_buttons(msg)
+                    current_text = msg.text or msg.caption or ""
+
+                    if current_buttons != initial_buttons or current_text != initial_text:
+                        self._cached_message = msg
+                        print(f"  → Message edit detected (buttons: {initial_buttons}→{current_buttons})")
+                        return
             except Exception:
                 pass
 
-        return None
+            await asyncio.sleep(0.5)
 
-    async def _wait_for_edit(self, timeout=15):
-        """Wait for the message to be edited."""
-        self._edit_event.clear()
-        try:
-            await asyncio.wait_for(self._edit_event.wait(), timeout=timeout)
-            self._edit_event.clear()
-        except asyncio.TimeoutError:
-            pass
+        print(f"  → Wait for edit timed out after {timeout}s")
+
+    def _count_buttons(self, message):
+        """Count total inline buttons on a message."""
+        if not message:
+            return 0
+
+        rm = getattr(message, "reply_markup", None)
+        if not rm:
+            return 0
+
+        rows = getattr(rm, "inline_keyboard", None)
+        if not rows:
+            return 0
+
+        return sum(len(row) for row in rows if row)
 
     async def _wait_for_reply_to(self, message_id, chat_id, timeout=30):
         """Wait for a bot reply to a specific message using starter client."""
@@ -1055,15 +1070,16 @@ class HeistOrchestrator:
 
         while time.time() < deadline:
             try:
-                async for msg in client.get_chat_history(chat_id, limit=10):
-                    if (
-                        getattr(msg, "reply_to_message_id", None) == message_id
-                        and msg.from_user
-                        and msg.from_user.id == BOT_USER_ID
-                    ):
-                        return msg
-            except Exception:
-                pass
+                # Fetch recent messages and look for a reply
+                async for msg in client.get_chat_history(chat_id, limit=20):
+                    reply_to = getattr(msg, "reply_to_message_id", None)
+
+                    if reply_to == message_id:
+                        from_user = getattr(msg, "from_user", None)
+                        if from_user and from_user.id == BOT_USER_ID:
+                            return msg
+            except Exception as e:
+                print(f"⚠️ _wait_for_reply error: {e}")
 
             await asyncio.sleep(0.5)
 
