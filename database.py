@@ -670,6 +670,77 @@ def init_db():
                     ALTER COLUMN fishing_periodic_check_at
                     SET DEFAULT 0;
                 END IF;
+
+                -- heist_config migrations
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='heist_config' AND column_name='chat_id'
+                ) THEN
+                    ALTER TABLE heist_config ADD COLUMN chat_id BIGINT DEFAULT 0;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='heist_config' AND column_name='use_backup_group'
+                ) THEN
+                    ALTER TABLE heist_config ADD COLUMN use_backup_group INTEGER DEFAULT 0;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='heist_config' AND column_name='selected_level'
+                ) THEN
+                    ALTER TABLE heist_config ADD COLUMN selected_level INTEGER DEFAULT 1;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='heist_config' AND column_name='auto_enabled'
+                ) THEN
+                    ALTER TABLE heist_config ADD COLUMN auto_enabled INTEGER DEFAULT 0;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='heist_config' AND column_name='auto_level_mode'
+                ) THEN
+                    ALTER TABLE heist_config ADD COLUMN auto_level_mode TEXT DEFAULT 'best_available';
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='heist_config' AND column_name='steal_count'
+                ) THEN
+                    ALTER TABLE heist_config ADD COLUMN steal_count INTEGER DEFAULT 0;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='heist_config' AND column_name='move_count'
+                ) THEN
+                    ALTER TABLE heist_config ADD COLUMN move_count INTEGER DEFAULT 0;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='heist_config' AND column_name='listen_timeout'
+                ) THEN
+                    ALTER TABLE heist_config ADD COLUMN listen_timeout INTEGER DEFAULT 600;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='heist_config' AND column_name='phase_timeout'
+                ) THEN
+                    ALTER TABLE heist_config ADD COLUMN phase_timeout INTEGER DEFAULT 300;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='heist_config' AND column_name='heartbeat_log'
+                ) THEN
+                    ALTER TABLE heist_config ADD COLUMN heartbeat_log INTEGER DEFAULT 0;
+                END IF;
             END $$;
         """)
 
