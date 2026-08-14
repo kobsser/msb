@@ -2089,6 +2089,8 @@ def get_heist_state(user_id):
 
 
 def set_heist_state(user_id, state, message_id=0, chat_id=0, level=0, error=""):
+    now = int(time.time())
+
     with get_db_cursor(commit=True) as cur:
         cur.execute(
             """
@@ -2097,7 +2099,7 @@ def set_heist_state(user_id, state, message_id=0, chat_id=0, level=0, error=""):
                 steal_clicks_done, move_clicks_done,
                 started_at, updated_at, error_message
             )
-            VALUES (%s, %s, %s, %s, %s, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, %s)
+            VALUES (%s, %s, %s, %s, %s, 0, 0, %s, %s, %s)
             ON CONFLICT (user_id) DO UPDATE SET
                 state = EXCLUDED.state,
                 message_id = EXCLUDED.message_id,
@@ -2105,11 +2107,14 @@ def set_heist_state(user_id, state, message_id=0, chat_id=0, level=0, error=""):
                 level = EXCLUDED.level,
                 steal_clicks_done = 0,
                 move_clicks_done = 0,
-                started_at = CURRENT_TIMESTAMP,
-                updated_at = CURRENT_TIMESTAMP,
+                started_at = EXCLUDED.started_at,
+                updated_at = EXCLUDED.updated_at,
                 error_message = EXCLUDED.error_message
             """,
-            (user_id, str(state), int(message_id), int(chat_id), int(level), str(error))
+            (
+                user_id, str(state), int(message_id), int(chat_id),
+                int(level), now, now, str(error)
+            )
         )
 
 
@@ -2134,7 +2139,8 @@ def update_heist_state(user_id, **kwargs):
     if not fields:
         return
 
-    fields.append("updated_at = CURRENT_TIMESTAMP")
+    fields.append("updated_at = %s")
+    values.append(int(time.time()))
     values.append(user_id)
 
     with get_db_cursor(commit=True) as cur:
@@ -2145,11 +2151,13 @@ def update_heist_state(user_id, **kwargs):
 
 
 def reset_heist_state(user_id):
+    now = int(time.time())
+
     with get_db_cursor(commit=True) as cur:
         cur.execute(
             """
-            INSERT INTO heist_state (user_id, state)
-            VALUES (%s, 'idle')
+            INSERT INTO heist_state (user_id, state, started_at, updated_at)
+            VALUES (%s, 'idle', %s, %s)
             ON CONFLICT (user_id) DO UPDATE SET
                 state = 'idle',
                 message_id = 0,
@@ -2158,9 +2166,9 @@ def reset_heist_state(user_id):
                 steal_clicks_done = 0,
                 move_clicks_done = 0,
                 error_message = '',
-                updated_at = CURRENT_TIMESTAMP
+                updated_at = %s
             """,
-            (user_id,)
+            (user_id, now, now, now)
         )
 
 
@@ -2169,6 +2177,9 @@ def reset_heist_state(user_id):
 # ============================================================
 
 def add_heist_log(user_id, level, result, duration_seconds, accounts_used):
+    now = int(time.time())
+    started = now - int(duration_seconds)
+
     with get_db_cursor(commit=True) as cur:
         cur.execute(
             """
@@ -2176,9 +2187,7 @@ def add_heist_log(user_id, level, result, duration_seconds, accounts_used):
                 user_id, level, result, duration_seconds,
                 accounts_used, started_at, finished_at
             )
-            VALUES (%s, %s, %s, %s, %s,
-                    CURRENT_TIMESTAMP - (%s || ' seconds')::INTERVAL,
-                    CURRENT_TIMESTAMP)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 user_id,
@@ -2186,6 +2195,10 @@ def add_heist_log(user_id, level, result, duration_seconds, accounts_used):
                 str(result),
                 int(duration_seconds),
                 json.dumps(accounts_used, ensure_ascii=False),
+                started,
+                now,
+            )
+        )
                 int(duration_seconds),
             )
         )
