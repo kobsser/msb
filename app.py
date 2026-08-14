@@ -1487,70 +1487,51 @@ def check_heist_cooldowns():
 # Heist SSE stream
 # ============================================================
 
-@app.route("/heist/stream")
+@app.route("/heist/state")
 @login_required
-def heist_stream():
+def heist_state_endpoint():
+    import time as _time
+
     user_id = session["user_id"]
 
-    def generate():
-        import json
-        import time as _time
+    try:
+        state = get_heist_state(user_id)
+        config = get_heist_config(user_id)
+        accounts = get_heist_accounts(user_id)
+        cooldowns = get_all_heist_cooldowns(user_id)
 
-        while True:
-            try:
-                state = get_heist_state(user_id)
-                config = get_heist_config(user_id)
-                accounts = get_heist_accounts(user_id)
-                cooldowns = get_all_heist_cooldowns(user_id)
+        account_uids = []
+        for acc in accounts:
+            tg_acc = get_tg_account(acc["phone"])
+            if tg_acc:
+                account_uids.append(tg_acc.get("uid", ""))
 
-                # Build account UIDs list
-                account_uids = []
-                for acc in accounts:
-                    tg_acc = get_tg_account(acc["phone"])
-                    if tg_acc:
-                        account_uids.append(tg_acc.get("uid", ""))
+        any_jailed = False
+        jail_until = 0
+        for acc in accounts:
+            tg_acc = get_tg_account(acc["phone"])
+            if tg_acc and int(tg_acc.get("jail_until") or 0) > int(_time.time()):
+                any_jailed = True
+                jail_until = max(jail_until, int(tg_acc.get("jail_until") or 0))
 
-                # Check if any account is jailed
-                any_jailed = False
-                jail_until = 0
-                for acc in accounts:
-                    tg_acc = get_tg_account(acc["phone"])
-                    if tg_acc and int(tg_acc.get("jail_until") or 0) > int(_time.time()):
-                        any_jailed = True
-                        jail_until = max(jail_until, int(tg_acc.get("jail_until") or 0))
+        return jsonify({
+            "state": state.get("state", "idle"),
+            "message_id": state.get("message_id", 0),
+            "chat_id": state.get("chat_id", 0),
+            "level": state.get("level", 0),
+            "steal_clicks_done": state.get("steal_clicks_done", 0),
+            "move_clicks_done": state.get("move_clicks_done", 0),
+            "error_message": state.get("error_message", ""),
+            "accounts": account_uids,
+            "starter_uid": account_uids[0] if account_uids else "",
+            "cooldowns": cooldowns,
+            "any_jailed": any_jailed,
+            "jail_until": jail_until,
+            "is_running": heist.is_heist_running(user_id),
+        })
 
-                payload = {
-                    "state": state.get("state", "idle"),
-                    "message_id": state.get("message_id", 0),
-                    "chat_id": state.get("chat_id", 0),
-                    "level": state.get("level", 0),
-                    "steal_clicks_done": state.get("steal_clicks_done", 0),
-                    "move_clicks_done": state.get("move_clicks_done", 0),
-                    "error_message": state.get("error_message", ""),
-                    "accounts": account_uids,
-                    "starter_uid": account_uids[0] if account_uids else "",
-                    "cooldowns": cooldowns,
-                    "any_jailed": any_jailed,
-                    "jail_until": jail_until,
-                    "is_running": heist.is_heist_running(user_id),
-                }
-
-                yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
-
-            except Exception as e:
-                yield f"data: {{}}\n\n"
-
-            _time.sleep(2)
-
-    return Response(
-        generate(),
-        mimetype="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        }
-    )
+    except Exception as e:
+        return jsonify({"state": "idle", "error": str(e)}), 500
 
 
 # ============================================================

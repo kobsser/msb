@@ -467,31 +467,31 @@
             },
 
             connectSSE() {
-                const source = new EventSource("{{ url_for('heist_stream') }}");
+                // Poll every 2 seconds instead of SSE
+                this._pollInterval = setInterval(() => this.pollState(), 2000);
+                this.pollState(); // immediate first call
+            },
 
-                source.onmessage = (event) => {
-                    try {
-                        const data = JSON.parse(event.data);
-                        this.currentState = data.state || 'idle';
-                        this.heistLevel = data.level || 0;
-                        this.stealClicks = data.steal_clicks_done || 0;
-                        this.moveClicks = data.move_clicks_done || 0;
-                        this.isRunning = data.is_running || false;
-                        this.anyJailed = data.any_jailed || false;
-                        this.jailUntil = data.jail_until || 0;
-                        this.cooldowns = data.cooldowns || {};
-                        this.errorMessage = data.error_message || '';
-                        this.lastState = this.currentState;
+            async pollState() {
+                try {
+                    const res = await fetch("{{ url_for('heist_state_endpoint') }}");
+                    const data = await res.json();
 
-                        this.updateProgressSteps();
-                    } catch (e) {
-                        console.error('SSE parse error:', e);
-                    }
-                };
+                    this.currentState = data.state || 'idle';
+                    this.heistLevel = data.level || 0;
+                    this.stealClicks = data.steal_clicks_done || 0;
+                    this.moveClicks = data.move_clicks_done || 0;
+                    this.isRunning = data.is_running || false;
+                    this.anyJailed = data.any_jailed || false;
+                    this.jailUntil = data.jail_until || 0;
+                    this.cooldowns = data.cooldowns || {};
+                    this.errorMessage = data.error_message || '';
+                    this.lastState = this.currentState;
 
-                source.onerror = () => {
-                    // EventSource auto-reconnects
-                };
+                    this.updateProgressSteps();
+                } catch (e) {
+                    console.error('Poll error:', e);
+                }
             },
 
             updateProgressSteps() {
