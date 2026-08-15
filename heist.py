@@ -703,11 +703,15 @@ class HeistOrchestrator:
         if not btn:
             raise Exception("mrob_sel_loc button not found")
 
-        await click_heist_button(self._starter_client, msg, btn)
+        cb = getattr(btn, "callback_data", None)
+        if cb:
+            asyncio.create_task(self._fire_click(msg, cb))
         print("✅ Location selected")
 
         # Wait for edit (levels shown)
-        await self._get_latest_from_queue(timeout=PHASE_TIMEOUTS["select_loc"])
+        edit_msg = await self._get_latest_from_queue(timeout=PHASE_TIMEOUTS["select_loc"])
+        if edit_msg:
+            self._cached_message = edit_msg
 
     async def _phase_select_level(self, level):
         update_heist_state(self.user_id, state="level_shown")
@@ -718,18 +722,16 @@ class HeistOrchestrator:
 
         available_levels = []
         for btn in find_all_buttons_by_prefix(msg, CB_START_LOC):
-            cb = btn._callback_data
             try:
-                lvl = int(cb.split(":")[-1])
+                lvl = int(btn._callback_data.split(":")[-1])
                 available_levels.append(lvl)
             except (ValueError, IndexError):
                 pass
 
         for btn in find_all_buttons_by_prefix(msg, CB_CD_LOC):
-            cb = btn._callback_data
             text = getattr(btn, "text", "") or ""
             try:
-                lvl = int(cb.split(":")[-1])
+                lvl = int(btn._callback_data.split(":")[-1])
                 cd_seconds = parse_cd_time(text)
                 if cd_seconds > 0:
                     set_heist_cooldown(self.user_id, lvl, int(time.time()) + cd_seconds)
@@ -746,11 +748,18 @@ class HeistOrchestrator:
                         break
                 except (ValueError, IndexError):
                     pass
+
             if target_btn:
-                await click_heist_button(self._starter_client, msg, target_btn)
+                cb = getattr(target_btn, "callback_data", None)
+                if cb:
+                    asyncio.create_task(self._fire_click(msg, cb))
                 update_heist_state(self.user_id, state="level_selected", level=level)
                 print(f"✅ Level {level} selected")
+
                 await asyncio.sleep(random.uniform(0.5, 1.0))
+                edit_msg = await self._get_latest_from_queue(timeout=10)
+                if edit_msg:
+                    self._cached_message = edit_msg
                 return True
 
         print(f"❌ Level {level} not available. Available: {available_levels}")
@@ -770,7 +779,12 @@ class HeistOrchestrator:
                 msg = await client.get_messages(self._chat_id, self._message_id)
                 btn = find_button_by_prefix(msg, CB_JOIN)
                 if btn:
-                    await click_heist_button(client, msg, btn)
+                    cb = getattr(btn, "callback_data", None)
+                    if cb:
+                        try:
+                            await asyncio.wait_for(msg.click(callback_data=cb), timeout=5.0)
+                        except Exception:
+                            pass
                     return True
                 return False
 
@@ -798,31 +812,40 @@ class HeistOrchestrator:
         if not btn:
             raise Exception("mrob_confirm button not found")
 
-        await click_heist_button(self._starter_client, msg, btn)
+        cb = getattr(btn, "callback_data", None)
+        if cb:
+            asyncio.create_task(self._fire_click(msg, cb))
         print("✅ Heist confirmed")
+
         await asyncio.sleep(random.uniform(0.5, 1.0))
+        edit_msg = await self._get_latest_from_queue(timeout=10)
+        if edit_msg:
+            self._cached_message = edit_msg
 
     async def _phase_open(self):
         update_heist_state(self.user_id, state="phase_open")
         print("🎯 Account 1: Opening (mrob_act_open)")
 
         btn = await self._wait_for_button(CB_ACT_OPEN, timeout=PHASE_TIMEOUTS["open"])
-        if btn:
-            msg = await self._get_current_message()
-            open_btn = find_button_by_prefix(msg, CB_ACT_OPEN)
-            if open_btn:
-                await click_heist_button(self._starter_client, msg, open_btn)
-                print("✅ Opened")
+        if not btn:
+            raise Exception("mrob_act_open button never appeared")
 
-                # Wait for the bot to edit the message (show steal button)
-                await asyncio.sleep(random.uniform(1.0, 2.0))
-                edit_msg = await self._get_latest_from_queue(timeout=10)
-                if edit_msg:
-                    self._cached_message = edit_msg
+        msg = await self._get_current_message()
+        open_btn = find_button_by_prefix(msg, CB_ACT_OPEN)
+        if open_btn:
+            cb = getattr(open_btn, "callback_data", None)
+            if cb:
+                asyncio.create_task(self._fire_click(msg, cb))
+            print("✅ Opened")
 
-                return
+            # Wait for bot to edit message (show steal button)
+            await asyncio.sleep(random.uniform(1.0, 2.0))
+            edit_msg = await self._get_latest_from_queue(timeout=10)
+            if edit_msg:
+                self._cached_message = edit_msg
+            return
 
-        raise Exception("mrob_act_open button never appeared")
+        raise Exception("mrob_act_open button not found in message")
 
     async def _phase_steal(self, phone, steal_count, click_count_mode):
         update_heist_state(self.user_id, state="phase_steal")
@@ -884,7 +907,12 @@ class HeistOrchestrator:
                 msg = await client.get_messages(self._chat_id, self._message_id)
                 run_btn = find_button_by_prefix(msg, CB_ACT_RUN)
                 if run_btn:
-                    await click_heist_button(client, msg, run_btn)
+                    cb = getattr(run_btn, "callback_data", None)
+                    if cb:
+                        try:
+                            await asyncio.wait_for(msg.click(callback_data=cb), timeout=5.0)
+                        except Exception:
+                            pass
                     print("✅ Ran")
                     return True
             print("❌ mrob_act_run never appeared")
@@ -977,20 +1005,27 @@ class HeistOrchestrator:
 
         print(f"🎯 Heist finished: {result} | Level {level} | Duration {duration}s")
 
+    async def _fire_click(self, message, callback_data):
+        """Fire-and-forget click. Sends the click, ignores the response."""
+        try:
+            await message.click(callback_data=callback_data)
+        except Exception:
+            pass
+
     # ----------------------------------------------------------
     # Click loop with verification
     # ----------------------------------------------------------
 
     async def _click_loop(self, client, phase, button_prefix, stop_prefix,
                           max_clicks=0, click_count_mode="local"):
-        # Wait for the button to appear before starting the click loop
         phase_timeout = PHASE_TIMEOUTS.get(phase, 120)
+
+        # Wait for the button to appear before starting
         btn = await self._wait_for_button(
             button_prefix,
             timeout=phase_timeout,
             client=client
         )
-
         if not btn:
             print(f"  ❌ {button_prefix} never appeared for phase [{phase}]")
             return 0
@@ -1007,84 +1042,80 @@ class HeistOrchestrator:
                 print(f"  → Next phase detected, ending {phase}")
                 break
 
-            # Find button in current cached message
+            # Find button in cached message
             btn = find_button_by_prefix(self._cached_message, button_prefix)
 
             if not btn:
                 if clicks >= 1:
-                    # Button gone after at least 1 click → phase complete
                     print(f"  → {button_prefix} gone after {clicks} clicks")
                     break
                 else:
-                    # Button gone before any clicks → wait for it to appear
+                    # Button gone before any clicks, wait for it
                     btn = await self._wait_for_button(
-                        button_prefix,
-                        timeout=15,
-                        client=client
+                        button_prefix, timeout=15, client=client
                     )
                     if not btn:
                         print(f"  → {button_prefix} never appeared")
                         break
 
-            # Click the button
-            await click_heist_button(client, self._cached_message, btn)
+            # Check stop condition BEFORE clicking
+            if max_clicks > 0 and clicks >= max_clicks:
+                print(f"  → Reached {max_clicks} clicks, clicking stop")
+                stop_btn = find_button_by_prefix(self._cached_message, stop_prefix)
+                if stop_btn:
+                    cb = getattr(stop_btn, "callback_data", None)
+                    if cb:
+                        asyncio.create_task(self._fire_click(self._cached_message, cb))
+                break
+
+            # Fire click, don't wait for response
+            cb = getattr(btn, "callback_data", None)
+            if cb:
+                asyncio.create_task(self._fire_click(self._cached_message, cb))
             clicks += 1
 
-            # Wait for edit and update cache
+            # Tiny gap between clicks
             await asyncio.sleep(CLICK_DELAY)
+
+            # Check state from queue
             msg = await self._get_latest_from_queue(timeout=EDIT_WAIT_TIMEOUT)
             if msg:
                 self._cached_message = msg
 
-            # Verify click worked (completed count increased)
+            # Verify click worked
             new_completed = self._get_completed_count(phase)
             if new_completed is not None and last_completed is not None:
-                if new_completed <= last_completed:
-                    # Click didn't work, retry
-                    for retry in range(CLICK_MAX_RETRIES):
-                        await asyncio.sleep(CLICK_RETRY_DELAY)
-                        btn = find_button_by_prefix(self._cached_message, button_prefix)
-                        if btn:
-                            await click_heist_button(client, self._cached_message, btn)
-                            msg = await self._get_latest_from_queue(timeout=EDIT_WAIT_TIMEOUT)
-                            if msg:
-                                self._cached_message = msg
-                            new_completed = self._get_completed_count(phase)
-                            if new_completed is not None and new_completed > last_completed:
-                                break
+                if new_completed <= last_completed and clicks >= 2:
+                    # Click might have failed, retry once
+                    btn = find_button_by_prefix(self._cached_message, button_prefix)
+                    if btn:
+                        cb = getattr(btn, "callback_data", None)
+                        if cb:
+                            asyncio.create_task(self._fire_click(self._cached_message, cb))
+                        await asyncio.sleep(CLICK_DELAY)
+                        msg = await self._get_latest_from_queue(timeout=EDIT_WAIT_TIMEOUT)
+                        if msg:
+                            self._cached_message = msg
+                        new_completed = self._get_completed_count(phase)
+
                 if new_completed is not None:
                     last_completed = new_completed
 
-            # Check stop condition
-            if max_clicks > 0:
-                if click_count_mode == "message" and new_completed is not None:
-                    if new_completed >= max_clicks:
-                        print(f"  → Reached {max_clicks} (message mode), clicking stop")
-                        stop_btn = find_button_by_prefix(self._cached_message, stop_prefix)
-                        if stop_btn:
-                            await click_heist_button(client, self._cached_message, stop_btn)
-                        break
-                else:
-                    if clicks >= max_clicks:
-                        print(f"  → Reached {max_clicks} (local mode), clicking stop")
-                        stop_btn = find_button_by_prefix(self._cached_message, stop_prefix)
-                        if stop_btn:
-                            await click_heist_button(client, self._cached_message, stop_btn)
-                        break
-            else:
-                # Unlimited mode: check if button is gone or next phase is up
+            # Unlimited mode: check if button is gone
+            if max_clicks == 0:
                 btn = find_button_by_prefix(self._cached_message, button_prefix)
-                if not btn:
-                    if clicks >= 1:
-                        print(f"  → Button gone after {clicks} clicks (unlimited)")
+                if not btn and clicks >= 1:
+                    if self._is_next_phase_up(phase):
+                        print(f"  → Next phase up, ending {phase}")
                         break
-                    # If 0 clicks and button gone, wait a bit and recheck
+                    # Wait a moment and recheck
                     await asyncio.sleep(0.5)
                     msg = await self._get_latest_from_queue(timeout=2.0)
                     if msg:
                         self._cached_message = msg
                     btn = find_button_by_prefix(self._cached_message, button_prefix)
-                    if not btn and self._is_next_phase_up(phase):
+                    if not btn:
+                        print(f"  → Button gone after {clicks} clicks (unlimited)")
                         break
 
         return clicks
