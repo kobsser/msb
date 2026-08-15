@@ -2111,10 +2111,7 @@ def set_heist_state(user_id, state, message_id=0, chat_id=0, level=0, error=""):
                 updated_at = EXCLUDED.updated_at,
                 error_message = EXCLUDED.error_message
             """,
-            (
-                user_id, str(state), int(message_id), int(chat_id),
-                int(level), now, now, str(error)
-            )
+            (user_id, str(state), int(message_id), int(chat_id), int(level), now, now, str(error))
         )
 
 
@@ -2172,10 +2169,6 @@ def reset_heist_state(user_id):
         )
 
 
-# ============================================================
-# Heist logs
-# ============================================================
-
 def add_heist_log(user_id, level, result, duration_seconds, accounts_used):
     now = int(time.time())
     started = now - int(duration_seconds)
@@ -2196,10 +2189,7 @@ def add_heist_log(user_id, level, result, duration_seconds, accounts_used):
                 int(duration_seconds),
                 json.dumps(accounts_used, ensure_ascii=False),
                 started,
-                now,
-            )
-        )
-                int(duration_seconds),
+                now
             )
         )
 
