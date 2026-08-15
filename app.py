@@ -1282,6 +1282,9 @@ def save_heist_config_route():
     listen_timeout = request.form.get("listen_timeout", "600").strip()
     phase_timeout = request.form.get("phase_timeout", "300").strip()
     heartbeat = request.form.get("heartbeat_log") == "on"
+    click_count_mode = request.form.get("click_count_mode", "local").strip()
+    if click_count_mode not in ("local", "message"):
+        click_count_mode = "local"
 
     try:
         chat_id = int(chat_id) if chat_id else 0
@@ -1329,6 +1332,7 @@ def save_heist_config_route():
         "listen_timeout": listen_timeout,
         "phase_timeout": phase_timeout,
         "heartbeat_log": 1 if heartbeat else 0,
+        "click_count_mode": click_count_mode,
     })
 
     flash("Heist settings saved", "success")

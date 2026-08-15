@@ -224,6 +224,26 @@
                     <span class="text-sm opacity-60">Heartbeat log (every 30s)</span>
                 </label>
 
+                <!-- Click Count Mode -->
+                <div class="form-control">
+                    <label class="label pb-1">
+                        <span class="label-text text-xs font-medium opacity-60">Click Count Mode</span>
+                    </label>
+                    <select name="click_count_mode" class="select select-bordered select-sm w-full bg-base-200/50">
+                        <option value="local" {{ 'selected' if config.click_count_mode == 'local' }}>
+                            Local (count clicks)
+                        </option>
+                        <option value="message" {{ 'selected' if config.click_count_mode == 'message' }}>
+                            Message (parse text)
+                        </option>
+                    </select>
+                    <label class="label">
+                        <span class="label-text-alt opacity-50">
+                            Local: count clicks | Message: parse completed count from text
+                        </span>
+                    </label>
+                </div>
+
                 <button type="submit" class="btn btn-primary btn-sm w-full gap-1">
                     <i data-lucide="save" class="w-3.5 h-3.5"></i>
                     Save Settings

@@ -741,6 +741,13 @@ def init_db():
                 ) THEN
                     ALTER TABLE heist_config ADD COLUMN heartbeat_log INTEGER DEFAULT 0;
                 END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='heist_config' AND column_name='click_count_mode'
+                ) THEN
+                    ALTER TABLE heist_config ADD COLUMN click_count_mode TEXT DEFAULT 'local';
+                END IF;
             END $$;
         """)
 
@@ -1915,6 +1922,7 @@ def get_heist_config(user_id):
         "listen_timeout": 600,
         "phase_timeout": 300,
         "heartbeat_log": 0,
+        "click_count_mode": "local",
     }
 
 
@@ -1925,9 +1933,9 @@ def save_heist_config(user_id, config):
             INSERT INTO heist_config (
                 user_id, chat_id, use_backup_group, selected_level,
                 auto_enabled, auto_level_mode, steal_count, move_count,
-                listen_timeout, phase_timeout, heartbeat_log
+                listen_timeout, phase_timeout, heartbeat_log, click_count_mode
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (user_id) DO UPDATE SET
                 chat_id = EXCLUDED.chat_id,
                 use_backup_group = EXCLUDED.use_backup_group,
@@ -1938,7 +1946,8 @@ def save_heist_config(user_id, config):
                 move_count = EXCLUDED.move_count,
                 listen_timeout = EXCLUDED.listen_timeout,
                 phase_timeout = EXCLUDED.phase_timeout,
-                heartbeat_log = EXCLUDED.heartbeat_log
+                heartbeat_log = EXCLUDED.heartbeat_log,
+                click_count_mode = EXCLUDED.click_count_mode
             """,
             (
                 user_id,
@@ -1952,9 +1961,9 @@ def save_heist_config(user_id, config):
                 int(config.get("listen_timeout", 600)),
                 int(config.get("phase_timeout", 300)),
                 int(config.get("heartbeat_log", 0)),
+                str(config.get("click_count_mode", "local")),
             )
         )
-
 
 # ============================================================
 # Heist accounts
