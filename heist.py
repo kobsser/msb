@@ -251,6 +251,7 @@ class HeistOrchestrator:
         self._heist_phones = []
         self._edit_handler = None
         self._message_handler = None
+        self._trigger_message_id = 0
 
     # ----------------------------------------------------------
     # Public API
@@ -332,6 +333,7 @@ class HeistOrchestrator:
 
         finally:
             self._running = False
+            self._trigger_message_id = 0
             for p in phones:
                 HEIST_TRACKED_MESSAGES.discard((p, chat_id))
                 HEIST_ACTIVE_MESSAGES.pop((p, chat_id), None)
@@ -398,6 +400,12 @@ class HeistOrchestrator:
             if (message.chat.id == chat_id and
                     message.from_user and
                     message.from_user.id == BOT_USER_ID):
+
+                # Once trigger ID is known, only accept replies to it
+                if self._trigger_message_id > 0:
+                    if getattr(message, "reply_to_message_id", None) != self._trigger_message_id:
+                        return
+
                 try:
                     asyncio.run_coroutine_threadsafe(
                         self._edit_queue.put(message),
@@ -462,6 +470,29 @@ class HeistOrchestrator:
             except asyncio.QueueEmpty:
                 break
         return latest
+
+    async def _wait_for_trigger_reply(self, timeout=30):
+        """Wait for the bot's reply to the trigger message, discarding unrelated messages."""
+        deadline = time.time() + timeout
+
+        while time.time() < deadline:
+            if self._abort_requested:
+                return None
+
+            remaining = max(0.1, deadline - time.time())
+            msg = await self._get_latest_from_queue(timeout=min(2.0, remaining))
+
+            if msg:
+                reply_to = getattr(msg, "reply_to_message_id", None)
+
+                if reply_to == self._trigger_message_id:
+                    return msg
+
+                # Not the trigger reply, discard
+                print(f"  → Discarding non-trigger message (id={msg.id}, reply_to={reply_to})")
+                continue
+
+        return None
 
     async def _get_current_message(self):
         msg = await self._get_latest_from_queue(timeout=0.5)
@@ -661,23 +692,20 @@ class HeistOrchestrator:
         update_heist_state(self.user_id, state="trigger_sent")
         print(f"🎯 [{mask_phone(starter_phone)}] Sending heist trigger")
 
+        # Register handlers BEFORE sending trigger
+        self._register_handlers(chat_id, 0)
+
+        # Send trigger
         sent = await self._starter_client.send_message(chat_id, HEIST_TRIGGER)
 
-        # Register handlers BEFORE waiting for reply
-        self._register_handlers(chat_id, sent.id)
+        # Set trigger ID for filtering
+        self._trigger_message_id = sent.id
 
-        # Wait for bot reply via queue
-        reply = await self._get_latest_from_queue(timeout=PHASE_TIMEOUTS["trigger"])
+        # Wait for the actual trigger reply (filtered by reply_to_message_id)
+        reply = await self._wait_for_trigger_reply(timeout=PHASE_TIMEOUTS["trigger"])
 
         if not reply:
             raise Exception("No bot reply to heist trigger")
-
-        # Verify it's a reply to our trigger
-        if getattr(reply, "reply_to_message_id", None) != sent.id:
-            # Might be a different message, wait a bit more
-            reply2 = await self._get_latest_from_queue(timeout=10)
-            if reply2 and getattr(reply2, "reply_to_message_id", None) == sent.id:
-                reply = reply2
 
         self._message_id = reply.id
         self._cached_message = reply
